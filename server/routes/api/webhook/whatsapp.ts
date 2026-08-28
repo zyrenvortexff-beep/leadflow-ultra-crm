@@ -41,6 +41,49 @@ const firstKeyword = (value: unknown) =>
 
 const cleanPhone = (value: unknown) => String(value || "").replace(/\D/g, "");
 
+async function downloadAndStoreMetaMedia(opts: {
+  mediaId: string;
+  accessToken: string;
+  orgId: string;
+}): Promise<string | null> {
+  try {
+    const token = opts.accessToken.replace(/^Bearer\s+/i, "");
+    const infoRes = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/${opts.mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!infoRes.ok) return null;
+    const infoData = await infoRes.json();
+    const downloadUrl = infoData?.url;
+    const mimeType = infoData?.mime_type || "image/jpeg";
+    const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+    if (!downloadUrl) return null;
+
+    const fileRes = await fetch(downloadUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!fileRes.ok) return null;
+    const fileBuffer = await fileRes.arrayBuffer();
+
+    const fileName = `${opts.orgId}/inbound_${Date.now()}_${opts.mediaId}.${ext}`;
+    const { data: uploadData, error: uploadErr } = await admin.storage
+      .from("crm-media")
+      .upload(fileName, fileBuffer, {
+        contentType: mimeType,
+        upsert: true,
+      });
+    if (uploadErr) {
+      console.error("[media-upload] error:", uploadErr);
+      return null;
+    }
+
+    const { data: pubUrl } = admin.storage.from("crm-media").getPublicUrl(uploadData.path);
+    return pubUrl.publicUrl;
+  } catch (e) {
+    console.error("[media-download] error:", e);
+    return null;
+  }
+}
+
 async function sendMetaMessage(opts: {
   phoneNumberId: string;
   accessToken: string;
@@ -86,7 +129,6 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event);
   const method = event.method;
 
-  // CORS headers
   setResponseHeader(event, "Access-Control-Allow-Origin", "*");
   setResponseHeader(event, "Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type");
   setResponseHeader(event, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -274,7 +316,13 @@ export default defineEventHandler(async (event) => {
       null;
   } else if (message?.type === "image") {
     text = message?.image?.caption || "[imagen]";
-    mediaUrl = message?.image?.id ? `https://graph.facebook.com/${META_GRAPH_VERSION}/${message.image.id}` : null;
+    if (message?.image?.id && metaCfg?.access_token) {
+      mediaUrl = await downloadAndStoreMetaMedia({
+        mediaId: message.image.id,
+        accessToken: metaCfg.access_token,
+        orgId,
+      });
+    }
   } else if (message?.type === "video") text = message?.video?.caption || "[video]";
   else if (message?.type === "audio") text = "[audio]";
   else if (message?.type === "document") text = message?.document?.filename ? `[documento] ${message.document.filename}` : "[documento]";

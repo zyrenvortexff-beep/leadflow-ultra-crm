@@ -20,8 +20,8 @@ import { toast } from "sonner";
 import {
   Send, Search, Check, CheckCheck, Clock, AlertCircle,
   User as UserIcon, Loader2, Tag, Save, Phone, X, Trash2,
+  Image as ImageIcon, Paperclip, ExternalLink
 } from "lucide-react";
-
 
 export const Route = createFileRoute("/_app/messages")({
   component: Messages,
@@ -37,6 +37,7 @@ interface Msg {
   error_message: string | null;
   keyword_matched: string | null;
   automation_id: string | null;
+  media_url?: string | null;
 }
 
 interface LeadInfo {
@@ -58,7 +59,7 @@ interface ContactInfo {
 }
 
 interface Conversation {
-  phone: string;          // normalized digits-only
+  phone: string;
   displayName: string;
   lastMessage: string;
   lastTs: string;
@@ -92,6 +93,12 @@ function Messages() {
   const [editingTags, setEditingTags] = useState("");
   const [savingDetails, setSavingDetails] = useState(false);
   const [hiddenWarnings, setHiddenWarnings] = useState<Set<string>>(new Set());
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Load initial data: cache-first + delta sync from cloud
@@ -100,7 +107,6 @@ function Messages() {
     const orgId = organization.id;
     setLoading(true);
     (async () => {
-      // 1) Paint from local cache instantly
       const cached = await loadCachedMessages(orgId);
       if (cached.length) {
         const sorted = [...cached]
@@ -110,11 +116,10 @@ function Messages() {
         setLoading(false);
       }
 
-      // 2) Delta sync: only fetch rows newer than the latest cached one
       const lastTs = await getLastCachedTimestamp(orgId);
       let query = supabase
         .from("messages_log")
-        .select("id,org_id,content,direction,timestamp,recipient,status,error_message,keyword_matched,automation_id")
+        .select("id,org_id,content,direction,timestamp,recipient,status,error_message,keyword_matched,automation_id,media_url")
         .eq("org_id", orgId)
         .not("recipient", "is", null)
         .order("timestamp", { ascending: false })
@@ -149,8 +154,6 @@ function Messages() {
         setMessages([]);
       }
       setLoading(false);
-
-      // Keep local cache lean (90 days max in the browser)
       pruneCacheOlderThanDays(orgId, 90);
     })();
   }, [organization]);
@@ -184,8 +187,7 @@ function Messages() {
     return () => { supabase.removeChannel(channel); };
   }, [organization]);
 
-
-  // Build conversation list (one per phone, sorted by last activity)
+  // Build conversation list
   const conversations: Conversation[] = useMemo(() => {
     const map = new Map<string, Conversation>();
     for (const m of messages) {
@@ -194,17 +196,18 @@ function Messages() {
       const lead = leadsByPhone.get(phone);
       const contact = contactsByPhone.get(phone);
       const existing = map.get(phone);
+      const previewText = m.content || (m.media_url ? "📷 [Imagen]" : "");
       if (existing) {
         if (new Date(m.timestamp) > new Date(existing.lastTs)) {
           existing.lastTs = m.timestamp;
-          existing.lastMessage = m.content ?? "";
+          existing.lastMessage = previewText;
           existing.inbound = m.direction === "inbound";
         }
       } else {
         map.set(phone, {
           phone,
           displayName: lead?.name || contact?.name || `+${phone}`,
-          lastMessage: m.content ?? "",
+          lastMessage: previewText,
           lastTs: m.timestamp,
           unread: 0,
           inbound: m.direction === "inbound",
@@ -213,7 +216,6 @@ function Messages() {
         });
       }
     }
-    // Include saved leads/contacts that don't have messages yet
     const addEmpty = (phone: string, name: string, tags: string[], status?: LeadInfo["status"]) => {
       if (!phone || map.has(phone)) return;
       map.set(phone, {
@@ -242,12 +244,10 @@ function Messages() {
     );
   }, [conversations, search]);
 
-  // Auto-select first conversation
   useEffect(() => {
     if (!activePhone && filteredConvs.length > 0) setActivePhone(filteredConvs[0].phone);
   }, [filteredConvs, activePhone]);
 
-  // Active thread (oldest → newest)
   const thread = useMemo(() => {
     if (!activePhone) return [];
     return messages
@@ -255,18 +255,15 @@ function Messages() {
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [messages, activePhone]);
 
-  // Auto-scroll to bottom on new message in active thread
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [thread.length, activePhone]);
+  }, [thread.length, activePhone, imagePreview]);
 
-  // Active lead/contact details
   const activeLead = activePhone ? leadsByPhone.get(activePhone) : undefined;
   const activeContact = activePhone ? contactsByPhone.get(activePhone) : undefined;
   const activeName = activeLead?.name || activeContact?.name || (activePhone ? `+${activePhone}` : "");
 
-  // 24h window status: last inbound message in this thread
   const lastInboundTs = useMemo(() => {
     const inbounds = thread.filter((m) => m.direction === "inbound");
     if (inbounds.length === 0) return null;
@@ -275,23 +272,75 @@ function Messages() {
   const windowClosed =
     !!activePhone && (lastInboundTs === null || Date.now() - lastInboundTs > 24 * 60 * 60 * 1000);
 
-  // Sync editing buffers when active changes
   useEffect(() => {
     const tags = activeLead?.tags ?? activeContact?.tags ?? [];
     setEditingTags(tags.join(", "));
     setEditingNotes(activeLead?.notes ?? activeContact?.notes ?? "");
   }, [activePhone, activeLead?.id, activeContact?.id]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Por favor selecciona un archivo de imagen válido");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("La imagen debe pesar menos de 5MB");
+      return;
+    }
+    setSelectedImage(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+
+  const clearImage = () => {
+    setSelectedImage(null);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const uploadSelectedImage = async (): Promise<string | null> => {
+    if (!selectedImage || !organization) return null;
+    setUploadingImage(true);
+    try {
+      const ext = selectedImage.name.split(".").pop() || "jpg";
+      const filePath = `${organization.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, selectedImage, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+      if (error) throw error;
+      const { data: pubUrl } = supabase.storage.from("crm-media").getPublicUrl(data.path);
+      return pubUrl.publicUrl;
+    } catch (e: any) {
+      console.error("[upload]", e);
+      toast.error("Error al subir la imagen: " + (e?.message || ""));
+      return null;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const sendMessage = async () => {
-    if (!user || !activePhone || !composer.trim()) return;
+    if (!user || !activePhone || (!composer.trim() && !selectedImage)) return;
     const text = composer.trim();
     const phoneClean = cleanPhone(activePhone);
     setSending(true);
-    // optimistic local message
+
+    let uploadedUrl: string | null = null;
+    if (selectedImage) {
+      uploadedUrl = await uploadSelectedImage();
+      if (!uploadedUrl) {
+        setSending(false);
+        return;
+      }
+    }
+
     const optimisticId = `tmp_${Date.now()}`;
     const optimistic: Msg = {
       id: optimisticId,
-      content: text,
+      content: text || (uploadedUrl ? "📷 [Imagen]" : ""),
       direction: "outbound",
       timestamp: new Date().toISOString(),
       recipient: phoneClean,
@@ -299,25 +348,26 @@ function Messages() {
       error_message: null,
       keyword_matched: null,
       automation_id: null,
+      media_url: uploadedUrl,
     };
     setMessages((prev) => [optimistic, ...prev]);
     setComposer("");
+    clearImage();
+
     try {
       const { data, error } = await supabase.functions.invoke("whatsapp-handler", {
-        body: { user_id: user.id, numero: phoneClean, mensaje: text },
+        body: {
+          user_id: user.id,
+          numero: phoneClean,
+          mensaje: text,
+          media_url: uploadedUrl || undefined,
+        },
       });
       if (error) throw new Error(error.message);
       const resp = data as any;
       if (resp && resp.ok === false) {
-        if (resp.disconnected) {
-          throw new Error("WhatsApp desconectado, por favor escanea el QR de nuevo");
-        }
         throw new Error(resp.error || "Error al enviar");
       }
-      if (resp?.messageId) {
-        console.log(`[messages] enviado ✔ messageId=${resp.messageId} to=${phoneClean}`);
-      }
-      // Realtime INSERT will replace; but drop optimistic right away to avoid dupes
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
     } catch (e: any) {
       setMessages((prev) =>
@@ -364,18 +414,18 @@ function Messages() {
           return next;
         });
       } else {
-        // Create a new lead so this contact is tracked
         const { data, error } = await supabase
           .from("leads")
           .insert({
             org_id: organization.id,
-            name: `+${activePhone}`,
+            name: activeName || `Lead +${activePhone}`,
             phone: activePhone,
             notes: editingNotes,
             tags,
+            status: "nuevo",
           })
-          .select("id,name,phone,email,notes,tags,status")
-          .maybeSingle();
+          .select()
+          .single();
         if (error) throw error;
         if (data) {
           setLeadsByPhone((prev) => {
@@ -387,64 +437,90 @@ function Messages() {
       }
       toast.success("Detalles guardados");
     } catch (e: any) {
-      toast.error(e?.message || "No se pudo guardar");
+      toast.error(e?.message || "Error al guardar");
     } finally {
       setSavingDetails(false);
     }
   };
 
-  const updateLeadStatus = async (status: LeadInfo["status"]) => {
-    if (!activeLead) return;
-    const prev = activeLead;
-    setLeadsByPhone((m) => {
-      const next = new Map(m);
-      next.set(activeLead.phone ? cleanPhone(activeLead.phone) : activePhone!, { ...prev, status });
-      return next;
-    });
-    const { error } = await supabase.from("leads").update({ status }).eq("id", activeLead.id);
-    if (error) toast.error(error.message);
+  const updateStatus = async (newStatus: LeadInfo["status"]) => {
+    if (!organization || !activePhone) return;
+    try {
+      if (activeLead) {
+        const { error } = await supabase
+          .from("leads")
+          .update({ status: newStatus })
+          .eq("id", activeLead.id);
+        if (error) throw error;
+        setLeadsByPhone((prev) => {
+          const next = new Map(prev);
+          next.set(activePhone, { ...activeLead, status: newStatus });
+          return next;
+        });
+      } else {
+        const { data, error } = await supabase
+          .from("leads")
+          .insert({
+            org_id: organization.id,
+            name: activeName || `Lead +${activePhone}`,
+            phone: activePhone,
+            status: newStatus,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        if (data) {
+          setLeadsByPhone((prev) => {
+            const next = new Map(prev);
+            next.set(activePhone, data as LeadInfo);
+            return next;
+          });
+        }
+      }
+      toast.success(`Estado actualizado a ${newStatus}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Error al actualizar estado");
+    }
   };
 
   const clearChat = async () => {
     if (!organization || !activePhone) return;
-    const orgId = organization.id;
-    const phone = activePhone;
-    const ok = window.confirm(
-      `¿Vaciar el chat con +${phone}?\n\nSe eliminarán TODOS los mensajes de esta conversación, tanto de la nube como del navegador. Esta acción no se puede deshacer.\n\nEl contacto/lead y sus etiquetas se conservarán.`,
+    const phoneClean = cleanPhone(activePhone);
+    const confirmed = window.confirm(
+      `¿Seguro que quieres borrar todos los mensajes con +${phoneClean}? Esta acción no se puede deshacer.`,
     );
-    if (!ok) return;
+    if (!confirmed) return;
     try {
-      // 1) Borrar de la nube (RLS: org_id = get_user_org(auth.uid()))
       const { error } = await supabase
         .from("messages_log")
         .delete()
-        .eq("org_id", orgId)
-        .eq("recipient", phone);
+        .eq("org_id", organization.id)
+        .eq("recipient", phoneClean);
       if (error) throw error;
-      // 2) Borrar del cache local (IndexedDB)
-      await deleteCachedMessagesByRecipient(orgId, phone);
-      // 3) Borrar del estado en memoria
-      setMessages((prev) => prev.filter((m) => cleanPhone(m.recipient) !== phone));
-      toast.success("Chat vaciado");
+      deleteCachedMessagesByRecipient(organization.id, phoneClean);
+      setMessages((prev) => prev.filter((m) => cleanPhone(m.recipient) !== phoneClean));
+      toast.success("Conversación vaciada");
     } catch (e: any) {
       toast.error(e?.message || "No se pudo vaciar el chat");
     }
   };
 
-
   return (
-    <div className="p-6 max-w-[1400px] mx-auto">
+    <div className="p-8 max-w-7xl mx-auto flex flex-col h-[calc(100vh-2rem)]">
       <BackToDashboard />
-      <PageHeader title="Mensajes" description="Chat en vivo con tus contactos vía WhatsApp" />
+      <PageHeader
+        title="Mensajes"
+        description="Bandeja unificada de conversaciones de WhatsApp con soporte multimedia"
+      />
 
-      <div className="grid grid-cols-12 gap-4 h-[calc(100vh-220px)] min-h-[560px]">
-        {/* COLUMN 1 — Conversations list */}
+      <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
+        {/* COLUMN 1 — Conversation list */}
         <aside className="col-span-12 md:col-span-4 lg:col-span-3 glass rounded-2xl flex flex-col overflow-hidden">
           <div className="p-3 border-b border-border">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Buscar conversación..."
+                placeholder="Buscar por nombre o número..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 bg-background/40"
@@ -542,24 +618,38 @@ function Messages() {
                 </Button>
               </header>
 
-              <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 bg-background/20">
+              <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-background/20">
                 {thread.length === 0 && (
                   <div className="text-center text-sm text-muted-foreground py-12">
-                    Sin mensajes todavía. Escribe algo abajo para iniciar.
+                    Sin mensajes todavía. Escribe algo o envía una imagen para iniciar.
                   </div>
                 )}
                 {thread.map((m) => {
                   const isOut = m.direction === "outbound";
+                  const imageUrl = m.media_url || (m.content?.startsWith("http") && (m.content.endsWith(".jpg") || m.content.endsWith(".png") || m.content.endsWith(".webp")) ? m.content : null);
+
                   return (
                     <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
                       <div
-                        className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words shadow-sm ${
+                        className={`max-w-[75%] rounded-2xl p-3 text-sm shadow-sm space-y-2 ${
                           isOut
                             ? "bg-primary text-primary-foreground rounded-br-sm"
                             : "bg-secondary text-foreground rounded-bl-sm"
                         }`}
                       >
-                        <div>{m.content}</div>
+                        {imageUrl && (
+                          <div className="rounded-xl overflow-hidden cursor-pointer relative group" onClick={() => setViewingImage(imageUrl)}>
+                            <img
+                              src={imageUrl}
+                              alt="Adjunto de WhatsApp"
+                              className="max-h-60 w-full object-cover rounded-xl transition group-hover:scale-105"
+                              loading="lazy"
+                            />
+                          </div>
+                        )}
+                        {m.content && m.content !== "📷 [Imagen]" && (
+                          <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                        )}
                         <div className={`text-[10px] mt-1 flex items-center gap-1 justify-end ${
                           isOut ? "text-primary-foreground/70" : "text-muted-foreground"
                         }`}>
@@ -580,7 +670,7 @@ function Messages() {
                             )
                           )}
                           {m.keyword_matched && (
-                            <span className="ml-1 px-1 py-0.5 rounded bg-background/30">
+                            <span className="ml-1 px-1 py-0.5 rounded bg-background/30 text-[9px]">
                               #{m.keyword_matched}
                             </span>
                           )}
@@ -616,12 +706,50 @@ function Messages() {
                   </button>
                 </div>
               )}
+
+              {/* Media Preview before send */}
+              {imagePreview && (
+                <div className="p-3 bg-secondary/30 border-t border-border flex items-center gap-3">
+                  <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-border shrink-0">
+                    <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={clearImage}
+                      className="absolute top-1 right-1 p-0.5 bg-black/60 text-white rounded-full hover:bg-destructive"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">{selectedImage?.name}</p>
+                    <p>{((selectedImage?.size || 0) / 1024).toFixed(1)} KB · Se enviará con tu mensaje</p>
+                  </div>
+                </div>
+              )}
+
               <div className="p-3 border-t border-border bg-background/30">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageSelect}
+                  accept="image/*"
+                  className="hidden"
+                />
                 <div className="flex gap-2 items-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-11 w-11 shrink-0 text-muted-foreground hover:text-primary"
+                    title="Adjuntar imagen"
+                  >
+                    <ImageIcon className="w-5 h-5" />
+                  </Button>
                   <Textarea
                     value={composer}
                     onChange={(e) => setComposer(e.target.value)}
-                    placeholder="Escribe un mensaje..."
+                    placeholder={selectedImage ? "Agrega un pie de foto (opcional)..." : "Escribe un mensaje..."}
                     rows={1}
                     className="resize-none min-h-[44px] max-h-32 bg-background/50"
                     onKeyDown={(e) => {
@@ -630,14 +758,14 @@ function Messages() {
                         void sendMessage();
                       }
                     }}
-                    disabled={sending}
+                    disabled={sending || uploadingImage}
                   />
                   <Button
                     onClick={() => void sendMessage()}
-                    disabled={sending || !composer.trim()}
-                    className="gradient-brand text-background border-0 h-11"
+                    disabled={sending || uploadingImage || (!composer.trim() && !selectedImage)}
+                    className="gradient-brand text-background border-0 h-11 shrink-0 px-4"
                   >
-                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    {sending || uploadingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </Button>
                 </div>
               </div>
@@ -658,68 +786,58 @@ function Messages() {
                   {(activeName[0] || "?").toUpperCase()}
                 </div>
                 <div className="font-semibold">{activeName}</div>
-                <div className="text-xs text-muted-foreground font-mono">+{activePhone}</div>
-                {activeLead?.email && (
-                  <div className="text-xs text-muted-foreground mt-1">{activeLead.email}</div>
-                )}
-                <div className="mt-2 flex items-center justify-center gap-1.5">
-                  {activeLead ? (
-                    <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px]">Lead</Badge>
-                  ) : activeContact ? (
-                    <Badge className="bg-accent/15 text-accent border-accent/30 text-[10px]">Contacto</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-[10px]">Sin registro</Badge>
-                  )}
-                </div>
+                <div className="text-xs text-muted-foreground font-mono mt-0.5">+{activePhone}</div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
-                {activeLead && (
-                  <div>
-                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Estado</Label>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      {(["nuevo", "interesado", "cliente", "perdido"] as const).map((s) => (
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div>
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Etapa del embudo
+                  </Label>
+                  <div className="grid grid-cols-2 gap-1.5 mt-2">
+                    {(["nuevo", "interesado", "cliente", "perdido"] as const).map((st) => {
+                      const active = (activeLead?.status || "nuevo") === st;
+                      return (
                         <button
-                          key={s}
-                          onClick={() => void updateLeadStatus(s)}
-                          className={`text-xs py-1.5 rounded-lg border transition ${
-                            activeLead.status === s
-                              ? `${STATUS_COLORS[s]} border-transparent font-semibold`
-                              : "border-border hover:bg-secondary/40"
+                          key={st}
+                          onClick={() => void updateStatus(st)}
+                          className={`text-xs py-1.5 px-2 rounded-lg border capitalize font-medium transition ${
+                            active
+                              ? `${STATUS_COLORS[st]} border-current`
+                              : "border-border text-muted-foreground hover:bg-secondary"
                           }`}
                         >
-                          {s}
+                          {st}
                         </button>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
-                )}
+                </div>
 
                 <div>
-                  <Label htmlFor="tags" className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                    <Tag className="w-3 h-3" /> Etiquetas
+                  <Label htmlFor="tags" className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Etiquetas (separadas por coma)
                   </Label>
                   <Input
                     id="tags"
-                    placeholder="vip, interesado, demo"
                     value={editingTags}
                     onChange={(e) => setEditingTags(e.target.value)}
-                    className="mt-1 bg-background/40"
+                    placeholder="VIP, Curso, Interesado"
+                    className="mt-1 text-xs"
                   />
-                  <p className="text-[10px] text-muted-foreground mt-1">Separa con comas</p>
                 </div>
 
                 <div>
                   <Label htmlFor="notes" className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Notas
+                    Notas del lead
                   </Label>
                   <Textarea
                     id="notes"
-                    rows={5}
-                    placeholder="Notas internas sobre este contacto..."
                     value={editingNotes}
                     onChange={(e) => setEditingNotes(e.target.value)}
-                    className="mt-1 bg-background/40"
+                    placeholder="Escribe notas internas sobre este cliente..."
+                    rows={4}
+                    className="mt-1 text-xs resize-none"
                   />
                 </div>
 
@@ -727,35 +845,34 @@ function Messages() {
                   onClick={() => void saveDetails()}
                   disabled={savingDetails}
                   className="w-full gradient-brand text-background border-0"
+                  size="sm"
                 >
-                  {savingDetails ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4 mr-2" />
-                  )}
-                  Guardar cambios
+                  {savingDetails ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Guardar detalles
                 </Button>
-
-                {!activeLead && !activeContact && (
-                  <div className="text-xs text-muted-foreground text-center pt-2">
-                    Al guardar se creará un Lead nuevo para este número.
-                  </div>
-                )}
-
-                {(activeLead?.tags?.length || activeContact?.tags?.length) ? (
-                  <div className="pt-2">
-                    <div className="flex flex-wrap gap-1">
-                      {(activeLead?.tags ?? activeContact?.tags ?? []).map((t) => (
-                        <Badge key={t} variant="secondary" className="text-[10px]">#{t}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             </>
           )}
         </aside>
       </div>
+
+      {/* Modal Image Viewer */}
+      {viewingImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setViewingImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh]">
+            <img src={viewingImage} alt="Full view" className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl" />
+            <button
+              onClick={() => setViewingImage(null)}
+              className="absolute -top-3 -right-3 p-2 bg-background border border-border rounded-full text-foreground hover:bg-secondary"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

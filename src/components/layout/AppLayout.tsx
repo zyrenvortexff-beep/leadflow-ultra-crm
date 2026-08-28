@@ -1,4 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import {
   LayoutDashboard,
@@ -13,6 +14,9 @@ import {
   Briefcase,
   AlertTriangle,
   GraduationCap,
+  UsersRound,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,6 +33,7 @@ const nav: NavItem[] = [
   { to: "/whatsapp", label: "WhatsApp Hub", icon: Smartphone },
   { to: "/leads", label: "Leads", icon: Users },
   { to: "/contacts", label: "Contactos", icon: ContactIcon },
+  { to: "/groups", label: "Grupos WhatsApp", icon: UsersRound },
   { to: "/automations", label: "Automatizaciones", icon: Bot },
   { to: "/campaigns", label: "Campañas", icon: Megaphone },
   { to: "/messages", label: "Mensajes", icon: MessageSquare },
@@ -41,6 +46,23 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const isAgent = roles.includes("agent");
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("leadflow-theme") as "dark" | "light" | null;
+    const initial = saved || "dark";
+    setTheme(initial);
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(initial);
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    localStorage.setItem("leadflow-theme", next);
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(next);
+  };
 
   const handleLogout = async () => {
     try {
@@ -52,20 +74,29 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex">
+    <div className="min-h-screen bg-background text-foreground flex transition-colors duration-200">
       {/* Sidebar */}
-      <aside className="w-64 shrink-0 border-r border-border bg-sidebar/60 backdrop-blur-xl flex flex-col sticky top-0 h-screen overflow-y-auto">
-        <div className="p-6 border-b border-border">
-          <Link to="/dashboard" className="block">
-            <h1 className="text-xl font-bold text-gradient tracking-tight">LeadFlow Ultra</h1>
+      <aside className="w-64 shrink-0 border-r border-border bg-sidebar/80 backdrop-blur-xl flex flex-col sticky top-0 h-screen overflow-y-auto">
+        <div className="p-6 border-b border-border flex items-center justify-between">
+          <Link to="/dashboard" className="block min-w-0 flex-1">
+            <h1 className="text-xl font-bold text-gradient tracking-tight truncate">LeadFlow Ultra</h1>
             <p className="text-xs text-muted-foreground mt-1 truncate">
               {organization?.name ?? "Cargando..."}
             </p>
           </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground shrink-0 ml-2"
+            title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
+          >
+            {theme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
+          </Button>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
-        {nav.map((item) => {
+          {nav.map((item) => {
             const active = !item.external && pathname.startsWith(item.to);
             const Icon = item.icon;
             if (item.external) {

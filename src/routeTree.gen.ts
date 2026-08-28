@@ -20,6 +20,7 @@ import { Route as AppWhatsappRouteImport } from './routes/_app.whatsapp'
 import { Route as AppSuperadminRouteImport } from './routes/_app.superadmin'
 import { Route as AppMessagesRouteImport } from './routes/_app.messages'
 import { Route as AppLeadsRouteImport } from './routes/_app.leads'
+import { Route as AppGroupsRouteImport } from './routes/_app.groups'
 import { Route as AppErrorsRouteImport } from './routes/_app.errors'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppContactsRouteImport } from './routes/_app.contacts'
@@ -81,6 +82,11 @@ const AppLeadsRoute = AppLeadsRouteImport.update({
   path: '/leads',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGroupsRoute = AppGroupsRouteImport.update({
+  id: '/groups',
+  path: '/groups',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppErrorsRoute = AppErrorsRouteImport.update({
   id: '/errors',
   path: '/errors',
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/contacts': typeof AppContactsRoute
   '/dashboard': typeof AppDashboardRoute
   '/errors': typeof AppErrorsRoute
+  '/groups': typeof AppGroupsRoute
   '/leads': typeof AppLeadsRoute
   '/messages': typeof AppMessagesRoute
   '/superadmin': typeof AppSuperadminRoute
@@ -143,6 +150,7 @@ export interface FileRoutesByTo {
   '/contacts': typeof AppContactsRoute
   '/dashboard': typeof AppDashboardRoute
   '/errors': typeof AppErrorsRoute
+  '/groups': typeof AppGroupsRoute
   '/leads': typeof AppLeadsRoute
   '/messages': typeof AppMessagesRoute
   '/superadmin': typeof AppSuperadminRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   '/_app/contacts': typeof AppContactsRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/errors': typeof AppErrorsRoute
+  '/_app/groups': typeof AppGroupsRoute
   '/_app/leads': typeof AppLeadsRoute
   '/_app/messages': typeof AppMessagesRoute
   '/_app/superadmin': typeof AppSuperadminRoute
@@ -183,6 +192,7 @@ export interface FileRouteTypes {
     | '/contacts'
     | '/dashboard'
     | '/errors'
+    | '/groups'
     | '/leads'
     | '/messages'
     | '/superadmin'
@@ -201,6 +211,7 @@ export interface FileRouteTypes {
     | '/contacts'
     | '/dashboard'
     | '/errors'
+    | '/groups'
     | '/leads'
     | '/messages'
     | '/superadmin'
@@ -220,6 +231,7 @@ export interface FileRouteTypes {
     | '/_app/contacts'
     | '/_app/dashboard'
     | '/_app/errors'
+    | '/_app/groups'
     | '/_app/leads'
     | '/_app/messages'
     | '/_app/superadmin'
@@ -315,6 +327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLeadsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/groups': {
+      id: '/_app/groups'
+      path: '/groups'
+      fullPath: '/groups'
+      preLoaderRoute: typeof AppGroupsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/errors': {
       id: '/_app/errors'
       path: '/errors'
@@ -367,6 +386,7 @@ interface AppRouteChildren {
   AppContactsRoute: typeof AppContactsRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppErrorsRoute: typeof AppErrorsRoute
+  AppGroupsRoute: typeof AppGroupsRoute
   AppLeadsRoute: typeof AppLeadsRoute
   AppMessagesRoute: typeof AppMessagesRoute
   AppSuperadminRoute: typeof AppSuperadminRoute
@@ -380,6 +400,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppContactsRoute: AppContactsRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppErrorsRoute: AppErrorsRoute,
+  AppGroupsRoute: AppGroupsRoute,
   AppLeadsRoute: AppLeadsRoute,
   AppMessagesRoute: AppMessagesRoute,
   AppSuperadminRoute: AppSuperadminRoute,

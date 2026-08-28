@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Trash2, Plus, Bot, RefreshCw, Pencil, X, Save } from "lucide-react";
+import { Trash2, Plus, Bot, RefreshCw, Pencil, X, Save, Image as ImageIcon, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,8 @@ function Automations() {
   const [botActive, setBotActive] = useState<boolean | null>(null);
   const [repairing, setRepairing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resetForm = () => {
     setEditingId(null);
@@ -74,6 +76,33 @@ function Automations() {
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !organization) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Selecciona una imagen válida");
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const filePath = `automations/${organization.id}_${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+      if (error) throw error;
+      const { data: pubUrl } = supabase.storage.from("crm-media").getPublicUrl(data.path);
+      setForm((prev) => ({ ...prev, media_url: pubUrl.publicUrl }));
+      toast.success("Imagen subida correctamente");
+    } catch (err: any) {
+      toast.error("Error al subir imagen: " + (err?.message || ""));
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const load = async () => {
     if (!organization) return;
     setLoading(true);
@@ -99,7 +128,6 @@ function Automations() {
     load();
   }, [organization]);
 
-  // Realtime: reflect inserts/updates/deletes from other tabs or the bot
   useEffect(() => {
     if (!organization?.id) return;
     const channel = supabase
@@ -140,42 +168,39 @@ function Automations() {
   };
 
   const save = async () => {
-    if (!organization) return;
-    if (!form.trigger_keyword.trim()) {
-      toast.error("La palabra clave es requerida");
-      return;
+    if (!organization || !user) return;
+    if (!form.trigger_keyword.trim() || !form.response_text.trim()) {
+      return toast.error("Completa palabra clave y mensaje");
     }
     setSaving(true);
-    const payload: any = {
+    const payload = {
+      org_id: organization.id,
+      user_id: user.id,
       trigger_keyword: form.trigger_keyword.trim(),
-      response_text: form.response_text,
-      media_url: form.media_url || null,
-      link_regalo: form.link_regalo || null,
+      response_text: form.response_text.trim(),
+      media_url: form.media_url.trim() || null,
+      link_regalo: form.link_regalo.trim() || null,
       tag_to_apply: form.tag_to_apply.trim() || null,
       is_active: form.is_active,
       delay_seconds: form.delay_seconds,
     };
 
     if (editingId) {
-      const { data: updated, error } = await supabase
+      const { error } = await supabase
         .from("automations")
         .update(payload)
-        .eq("id", editingId)
-        .select()
-        .single();
+        .eq("id", editingId);
       setSaving(false);
       if (error) return toast.error(error.message);
       toast.success("Automatización actualizada");
-      if (updated) {
-        setList((prev) => prev.map((it) => (it.id === editingId ? (updated as Automation) : it)));
-      }
       resetForm();
+      load();
       return;
     }
 
     const { data: inserted, error } = await supabase
       .from("automations")
-      .insert({ ...payload, org_id: organization.id, user_id: user?.id ?? null })
+      .insert(payload)
       .select()
       .single();
     setSaving(false);
@@ -206,7 +231,7 @@ function Automations() {
       <BackToDashboard />
       <PageHeader
         title="Automatizaciones"
-        description="Respuestas automáticas según palabras clave"
+        description="Respuestas automáticas inteligentes con texto, imágenes y etiquetas"
         action={
           <div className="flex items-center gap-2">
             <Badge variant={botActive ? "default" : "secondary"} className={botActive ? "bg-success text-background" : ""}>
@@ -237,11 +262,12 @@ function Automations() {
               )}
             </div>
             <div>
-              <Label>Palabra clave</Label>
+              <Label>Palabra clave (disparador)</Label>
               <Input
                 value={form.trigger_keyword}
                 onChange={(e) => setForm({ ...form, trigger_keyword: e.target.value })}
-                placeholder="precio, info, hola..."
+                placeholder="precio, info, catalogo, hola..."
+                className="mt-1"
               />
             </div>
             <div>
@@ -249,16 +275,38 @@ function Automations() {
               <Textarea
                 value={form.response_text}
                 onChange={(e) => setForm({ ...form, response_text: e.target.value })}
-                rows={5}
+                rows={4}
                 placeholder="Usa {nombre} para personalizar"
+                className="mt-1 resize-none"
               />
             </div>
             <div>
-              <Label>URL de imagen/archivo (opcional)</Label>
+              <Label className="flex items-center justify-between">
+                <span>Imagen adjunta (opcional)</span>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  className="h-7 text-xs"
+                >
+                  {uploadingImage ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ImageIcon className="w-3 h-3 mr-1" />}
+                  Subir foto
+                </Button>
+              </Label>
               <Input
                 value={form.media_url}
                 onChange={(e) => setForm({ ...form, media_url: e.target.value })}
-                placeholder="https://..."
+                placeholder="https://... o sube una imagen arriba"
+                className="mt-1 text-xs font-mono"
               />
             </div>
             <div>
@@ -267,6 +315,7 @@ function Automations() {
                 value={form.link_regalo}
                 onChange={(e) => setForm({ ...form, link_regalo: e.target.value })}
                 placeholder="https://tu-link.com/regalo"
+                className="mt-1"
               />
             </div>
             <div>
@@ -274,11 +323,9 @@ function Automations() {
               <Input
                 value={form.tag_to_apply}
                 onChange={(e) => setForm({ ...form, tag_to_apply: e.target.value })}
-                placeholder="Ej: Curso, Precio, Interesado"
+                placeholder="Ej: CURSO, PRECIO, INTERESADO"
+                className="mt-1"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Cuando el bot detecte la palabra clave, esta etiqueta se aplicará automáticamente al contacto en el CRM.
-              </p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -296,6 +343,7 @@ function Automations() {
                       delay_seconds: e.target.value === "" ? 0 : Math.max(0, Math.min(60, parseInt(e.target.value) || 0)),
                     })
                   }
+                  className="mt-1"
                 />
               </div>
               <div className="flex items-end gap-3 pb-2">
@@ -308,10 +356,10 @@ function Automations() {
             </div>
             <Button
               onClick={save}
-              disabled={saving}
+              disabled={saving || uploadingImage}
               className="w-full gradient-brand text-background border-0"
             >
-              {editingId ? (
+              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : editingId ? (
                 <><Save className="w-4 h-4 mr-2" /> Guardar cambios</>
               ) : (
                 <><Plus className="w-4 h-4 mr-2" /> Crear automatización</>
@@ -350,22 +398,25 @@ function Automations() {
                           🏷 {a.tag_to_apply}
                         </Badge>
                       )}
+                      {a.media_url && (
+                        <span className="text-[10px] text-primary shrink-0 flex items-center">
+                          📷 Foto
+                        </span>
+                      )}
                     </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {a.response_text}
-                    </div>
+                    <p className="text-xs text-muted-foreground truncate">{a.response_text}</p>
                   </div>
                   <Switch checked={a.is_active} onCheckedChange={() => toggle(a)} />
                   <button
                     onClick={() => startEdit(a)}
-                    className="text-muted-foreground hover:text-primary"
+                    className="text-muted-foreground hover:text-primary p-1"
                     title="Editar"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => remove(a.id)}
-                    className="text-muted-foreground hover:text-destructive"
+                    className="text-muted-foreground hover:text-destructive p-1"
                     title="Eliminar"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -378,51 +429,58 @@ function Automations() {
 
         {/* iPhone Preview */}
         <div className="lg:sticky lg:top-8 self-start">
-          <h3 className="font-bold text-lg mb-4 text-center">Vista previa</h3>
-          <IPhonePreview text={form.response_text} mediaUrl={form.media_url} />
+          <h3 className="font-bold text-lg mb-4 text-center">Vista previa en WhatsApp</h3>
+          <IPhonePreview text={form.response_text} mediaUrl={form.media_url} linkRegalo={form.link_regalo} />
         </div>
       </div>
     </div>
   );
 }
 
-function IPhonePreview({ text, mediaUrl }: { text: string; mediaUrl?: string }) {
+function IPhonePreview({ text, mediaUrl, linkRegalo }: { text: string; mediaUrl?: string | null; linkRegalo?: string | null }) {
   const preview = text.replace(/\{nombre\}/g, "Carlos").replace(/\{nombre_cliente\}/g, "Carlos");
   return (
-    <div className="mx-auto w-[280px] h-[580px] rounded-[3rem] bg-neutral-900 border-[10px] border-neutral-800 shadow-2xl shadow-primary/20 overflow-hidden relative">
-      <div className="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-6 bg-black rounded-full z-10" />
+    <div className="mx-auto w-[290px] h-[600px] rounded-[3rem] bg-neutral-900 border-[10px] border-neutral-800 shadow-2xl shadow-primary/20 overflow-hidden relative">
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-5 bg-black rounded-full z-10" />
       <div className="h-full bg-[#0b141a] flex flex-col">
-        <div className="bg-[#202c33] px-4 pt-10 pb-3 flex items-center gap-3">
+        <div className="bg-[#202c33] px-4 pt-9 pb-3 flex items-center gap-3">
           <div className="w-8 h-8 rounded-full gradient-brand" />
           <div>
             <div className="text-white text-sm font-medium">Mi Empresa</div>
-            <div className="text-[10px] text-neutral-400">en línea</div>
+            <div className="text-[10px] text-emerald-400">en línea</div>
           </div>
         </div>
         <div
           className="flex-1 p-3 space-y-2 overflow-y-auto"
           style={{
             backgroundImage:
-              "radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px)",
+              "radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px)",
             backgroundSize: "20px 20px",
           }}
         >
           <div className="flex justify-end">
             <div className="bg-[#005c4b] text-white text-xs px-3 py-2 rounded-lg max-w-[80%]">
-              Hola, ¿tienen disponible el producto?
+              Hola, ¿tienen información disponible?
             </div>
           </div>
           <div className="flex justify-start">
-            <div className="bg-[#202c33] text-white text-xs px-3 py-2 rounded-lg max-w-[85%] space-y-2">
+            <div className="bg-[#202c33] text-white text-xs px-3 py-2 rounded-lg max-w-[88%] space-y-2">
               {mediaUrl && (
-                <img
-                  src={mediaUrl}
-                  alt="media"
-                  className="rounded max-h-32 w-full object-cover"
-                  onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-                />
+                <div className="rounded overflow-hidden">
+                  <img
+                    src={mediaUrl}
+                    alt="media"
+                    className="rounded max-h-36 w-full object-cover"
+                    onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                  />
+                </div>
               )}
-              <div className="whitespace-pre-wrap">{preview || "Tu mensaje aparecerá aquí"}</div>
+              <div className="whitespace-pre-wrap">{preview || "Tu mensaje aparecerá aquí..."}</div>
+              {linkRegalo && (
+                <a href={linkRegalo} target="_blank" rel="noreferrer" className="block text-primary text-[11px] underline truncate pt-1">
+                  {linkRegalo}
+                </a>
+              )}
             </div>
           </div>
         </div>

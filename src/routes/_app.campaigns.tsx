@@ -1,56 +1,60 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { useDailyUsage } from "@/lib/use-daily-usage";
 import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
-  Megaphone, Calendar, Users, Contact as ContactIcon, Lock,
-  Trash2, Zap, CheckCircle2, Pencil, Send, Clock,
+  Calendar, Users, Zap, Trash2, Clock, CheckCircle2, Lock,
+  Contact as ContactIcon, Pencil, Send, Image as ImageIcon, Loader2, X
 } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDailyUsage } from "@/lib/use-daily-usage";
-import { Progress } from "@/components/ui/progress";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 
-// ---- Helpers ----------------------------------------------------------------
+function localInputToUtcIso(localStr: string): string | null {
+  if (!localStr) return null;
+  const d = new Date(localStr);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
 
-// Returns "yyyy-MM-ddTHH:mm" in LOCAL time, ready for <input type=datetime-local>
-function toLocalInput(date: Date) {
+function utcIsoToLocalInput(isoStr: string | null): string {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function defaultScheduleLocal() {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + 60 - (d.getMinutes() % 15));
-  d.setSeconds(0, 0);
-  return toLocalInput(d);
+function defaultScheduleLocal(): string {
+  const d = new Date(Date.now() + 10 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function nowPlusMinLocal(minutes = 1) {
-  const d = new Date(Date.now() + minutes * 60_000);
-  d.setSeconds(0, 0);
-  return toLocalInput(d);
-}
-
-// Convert a "datetime-local" string (interpreted in user's local TZ) to UTC ISO
-function localInputToUtcIso(local: string): string {
-  // new Date("yyyy-MM-ddTHH:mm") is parsed as LOCAL time → toISOString() is UTC
-  return new Date(local).toISOString();
+function nowPlusMinLocal(minutesAhead = 1): string {
+  const d = new Date(Date.now() + minutesAhead * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 interface Campaign {
   id: string;
   name: string;
   message_body: string;
+  media_url?: string | null;
   target_tags: string[];
   schedule_time: string | null;
   total_leads: number;
@@ -77,14 +81,45 @@ function Campaigns() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [clockNow, setClockNow] = useState(Date.now());
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [form, setForm] = useState({
     name: "",
     message_body: "Hola {nombre_cliente}, tenemos una promoción especial para ti 🎉",
+    media_url: "",
     target_tags: [] as string[],
     schedule_time: defaultScheduleLocal(),
   });
 
   const minScheduleLocal = useMemo(() => nowPlusMinLocal(1), []);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !organization) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Selecciona una imagen válida");
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const filePath = `campaigns/${organization.id}_${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+      if (error) throw error;
+      const { data: pubUrl } = supabase.storage.from("crm-media").getPublicUrl(data.path);
+      setForm((prev) => ({ ...prev, media_url: pubUrl.publicUrl }));
+      toast.success("Imagen de campaña cargada");
+    } catch (err: any) {
+      toast.error("Error al subir imagen: " + (err?.message || ""));
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const load = async () => {
     if (!organization) return;
@@ -122,7 +157,6 @@ function Campaigns() {
     return `en ${hours}h ${minutes % 60}m`;
   };
 
-  // Realtime: subscribe to campaigns updates so "Enviando X de Y…" updates live.
   useEffect(() => {
     if (!organization?.id) return;
     const channel = supabase
@@ -146,9 +180,8 @@ function Campaigns() {
       .filter((s) => /^[+\d][\d\s\-()]{5,20}$/.test(s)).length;
   };
 
-  // Common time validation
   const validateScheduleTime = (local: string): boolean => {
-    if (!local) return true; // empty = save as draft
+    if (!local) return true;
     const chosen = new Date(local);
     if (isNaN(chosen.getTime())) {
       toast.error("Fecha inválida");
@@ -178,6 +211,7 @@ function Campaigns() {
       org_id: organization!.id,
       name: form.name,
       message_body: form.message_body,
+      media_url: form.media_url.trim() || null,
       target_tags: form.target_tags,
       schedule_time: asScheduled ? localInputToUtcIso(form.schedule_time) : new Date().toISOString(),
       total_leads: total,
@@ -192,6 +226,7 @@ function Campaigns() {
     setForm({
       name: "",
       message_body: "Hola {nombre_cliente}, tenemos una promoción especial para ti 🎉",
+      media_url: "",
       target_tags: [],
       schedule_time: defaultScheduleLocal(),
     });
@@ -220,7 +255,7 @@ function Campaigns() {
     if (!payload) return;
     const { data: inserted, error } = await supabase.from("campaigns").insert(payload).select().single();
     if (error || !inserted) return toast.error(error?.message ?? "Error");
-    toast.success("Enviando campaña ahora…");
+    toast.success("Enviando campaña masiva ahora…");
     const { error: fnErr } = await supabase.functions.invoke("campaigns-dispatch", {
       body: { campaign_id: inserted.id },
     });
@@ -248,75 +283,86 @@ function Campaigns() {
     setTimeout(load, 1500);
   };
 
-  // ---- Edit dialog state ----
-  const [editForm, setEditForm] = useState({ name: "", message_body: "", schedule_time: "" });
   const openEdit = (c: Campaign) => {
     setEditing(c);
-    setEditForm({
-      name: c.name,
-      message_body: c.message_body,
-      schedule_time: c.schedule_time ? toLocalInput(new Date(c.schedule_time)) : "",
-    });
-  };
-  const saveEdit = async () => {
-    if (!editing) return;
-    if (editForm.schedule_time && !validateScheduleTime(editForm.schedule_time)) return;
-    const { error } = await supabase.from("campaigns").update({
-      name: editForm.name,
-      message_body: editForm.message_body,
-      schedule_time: editForm.schedule_time ? localInputToUtcIso(editForm.schedule_time) : null,
-    }).eq("id", editing.id);
-    if (error) return toast.error(error.message);
-    toast.success("Campaña actualizada");
-    setEditing(null);
-    load();
   };
 
-  const scheduleDisabled = usage?.reached || !validateLocalSilently(form.schedule_time);
-  function validateLocalSilently(local: string) {
-    if (!local) return true;
-    const t = new Date(local).getTime();
-    return !isNaN(t) && t > Date.now();
-  }
+  const scheduleDisabled = usage?.reached || Boolean(form.schedule_time && form.schedule_time < minScheduleLocal);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-8 max-w-7xl mx-auto space-y-8">
       <BackToDashboard />
-      <PageHeader title="Campañas" description="Envíos masivos por WhatsApp" />
+      <PageHeader
+        title="Campañas Masivas"
+        description="Envíos masivos y difusiones programadas con soporte para fotos y texto personalizado"
+      />
 
-      <div className="mb-4 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
-        ⚠️ <strong>Ventana de 24 horas (Meta Cloud API):</strong> solo puedes enviar texto plano a clientes
-        que te hayan escrito en las últimas 24h. Para destinatarios fuera de esa ventana, debes usar una
-        <strong> Plantilla aprobada de Meta</strong> o el envío fallará con código <span className="font-mono">131047</span>.
-      </div>
-
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid lg:grid-cols-2 gap-8">
         <div className="glass rounded-2xl p-6 space-y-4">
-          <h3 className="font-bold text-lg flex items-center gap-2">
-            <Megaphone className="w-5 h-5 text-primary" /> Nueva campaña
-          </h3>
+          <h3 className="font-bold text-lg">Nueva Campaña</h3>
           <div>
-            <Label>Nombre interno</Label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Promo abril 2025" />
+            <Label>Nombre de la campaña</Label>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Promo Primavera 2026" className="mt-1" />
           </div>
           <div>
-            <Label>Mensaje</Label>
+            <Label>Mensaje (o pie de foto si adjuntas imagen)</Label>
             <Textarea value={form.message_body} onChange={(e) => setForm({ ...form, message_body: e.target.value })}
-              rows={5} placeholder="Usa {nombre_cliente} para personalizar" />
-            <p className="text-xs text-muted-foreground mt-1">Variables: {"{nombre_cliente}"}, {"{telefono}"}</p>
+              rows={4} placeholder="Usa {nombre_cliente} para personalizar" className="mt-1 resize-none" />
+            <p className="text-xs text-muted-foreground mt-1">Variables disponibles: {"{nombre_cliente}"}, {"{telefono}"}</p>
+          </div>
+          <div>
+            <Label className="flex items-center justify-between">
+              <span>Imagen adjunta (opcional)</span>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                accept="image/*"
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingImage}
+                className="h-7 text-xs"
+              >
+                {uploadingImage ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ImageIcon className="w-3 h-3 mr-1" />}
+                Subir foto
+              </Button>
+            </Label>
+            <div className="flex gap-2 items-center mt-1">
+              <Input
+                value={form.media_url}
+                onChange={(e) => setForm({ ...form, media_url: e.target.value })}
+                placeholder="https://... o sube una imagen arriba"
+                className="text-xs font-mono"
+              />
+              {form.media_url && (
+                <Button type="button" variant="ghost" size="icon" onClick={() => setForm({ ...form, media_url: "" })} className="h-9 w-9 shrink-0">
+                  <X className="w-4 h-4 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
+            {form.media_url && (
+              <div className="mt-2 rounded-xl overflow-hidden border border-border h-24 w-40">
+                <img src={form.media_url} alt="Preview" className="w-full h-full object-cover" />
+              </div>
+            )}
           </div>
           <div>
             <Label>Audiencia</Label>
             <div className="flex gap-1 mt-2 p-1 bg-secondary rounded-lg">
-              {([["contacts", "Contactos"], ["manual", "Manual"]] as const).map(([k, l]) => (
+              {([["contacts", "Contactos guardados"], ["manual", "Lista manual"]] as const).map(([k, l]) => (
                 <button key={k} type="button" onClick={() => setAudience(k)}
-                  className={`flex-1 py-1.5 text-xs rounded-md transition-colors ${audience === k ? "bg-primary text-background" : "text-muted-foreground"}`}>
+                  className={`flex-1 py-1.5 text-xs rounded-md transition-colors ${audience === k ? "bg-primary text-background font-semibold" : "text-muted-foreground"}`}>
                   {l}
                 </button>
               ))}
             </div>
             {audience === "contacts" && (
-              <div className="mt-3 max-h-44 overflow-auto border border-border rounded-md divide-y divide-border">
+              <div className="mt-3 max-h-44 overflow-auto border border-border rounded-xl divide-y divide-border/60 bg-background/30">
                 {contacts.length === 0 && (
                   <p className="p-3 text-xs text-muted-foreground flex items-center gap-2">
                     <ContactIcon className="w-3 h-3" /> No hay contactos guardados aún.
@@ -327,24 +373,21 @@ function Campaigns() {
                     <input type="checkbox" checked={selectedContacts.includes(c.id)}
                       onChange={(e) => setSelectedContacts((s) => e.target.checked ? [...s, c.id] : s.filter((x) => x !== c.id))} />
                     <span className="flex-1 truncate">{c.name}</span>
-                    <span className="text-xs text-muted-foreground">{c.phone}</span>
+                    <span className="text-xs text-muted-foreground font-mono">+{c.phone}</span>
                   </label>
                 ))}
               </div>
             )}
             {audience === "manual" && (
               <Textarea value={manualNumbers} onChange={(e) => setManualNumbers(e.target.value)}
-                rows={4} placeholder={"+50499887766\n+50488776655"} className="mt-3 font-mono text-xs" />
+                rows={3} placeholder={"+50499887766\n+50488776655"} className="mt-3 font-mono text-xs" />
             )}
           </div>
           <div>
-            <Label>Programar envío (hora local AM/PM)</Label>
+            <Label>Programar envío (hora local)</Label>
             <Input type="datetime-local" value={form.schedule_time}
               min={minScheduleLocal} step={60}
-              onChange={(e) => setForm({ ...form, schedule_time: e.target.value })} />
-            <p className="text-xs text-muted-foreground mt-1">
-              Zona detectada: <span className="text-primary font-medium">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>. Se guarda en UTC y se muestra en tu hora local. Al menos 1 minuto en el futuro.
-            </p>
+              onChange={(e) => setForm({ ...form, schedule_time: e.target.value })} className="mt-1" />
           </div>
           {usage && !usage.unlimited && (
             <div>
@@ -354,28 +397,28 @@ function Campaigns() {
               <Progress value={usage.percent} className="h-1.5" />
             </div>
           )}
-          <div className="flex gap-2">
-            <Button onClick={schedule} disabled={scheduleDisabled} size="sm" variant="outline" className="flex-1">
+          <div className="flex gap-3 pt-2">
+            <Button onClick={schedule} disabled={scheduleDisabled || uploadingImage} size="sm" variant="outline" className="flex-1">
               {usage?.reached ? <Lock className="w-4 h-4 mr-1.5" /> : <Calendar className="w-4 h-4 mr-1.5" />}
               {usage?.reached ? "Límite" : "Programar"}
             </Button>
-            <Button onClick={sendImmediately} disabled={usage?.reached} size="sm"
+            <Button onClick={sendImmediately} disabled={usage?.reached || uploadingImage} size="sm"
               className="flex-1 gradient-brand text-background border-0">
               <Zap className="w-4 h-4 mr-1.5" /> Enviar ahora
             </Button>
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex items-center justify-between gap-3 px-2">
-            <h3 className="font-bold text-lg">Tus campañas</h3>
-            <Badge variant="secondary" className="gap-1.5 whitespace-nowrap" title="Sincronizado con el reloj global del minuto">
-              <Clock className="w-3 h-3" /> Revisión global en {nextCheckIn}s
+            <h3 className="font-bold text-lg">Historial de Campañas</h3>
+            <Badge variant="secondary" className="gap-1.5 whitespace-nowrap text-xs">
+              <Clock className="w-3 h-3" /> Auto-despacho en {nextCheckIn}s
             </Badge>
           </div>
           {loading && Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}
           {!loading && list.length === 0 && (
-            <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">No hay campañas aún</div>
+            <div className="glass rounded-2xl p-8 text-center text-sm text-muted-foreground">No hay campañas creadas aún</div>
           )}
           {!loading && list.map((c) => {
             const isDone = c.status === "sent" || c.status === "completed";
@@ -383,9 +426,12 @@ function Campaigns() {
             const progressPct = c.total_leads > 0 ? Math.round((c.sent_count / c.total_leads) * 100) : 0;
             const remaining = c.status === "scheduled" ? formatRemaining(c.schedule_time) : null;
             return (
-              <div key={c.id} className="glass rounded-2xl p-5">
-                <div className="flex items-start justify-between mb-2 gap-2">
-                  <h4 className="font-bold truncate">{c.name}</h4>
+              <div key={c.id} className="glass rounded-2xl p-5 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h4 className="font-bold truncate">{c.name}</h4>
+                    {c.media_url && <span className="text-[10px] text-primary shrink-0 flex items-center">📷 Foto</span>}
+                  </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Badge variant="secondary" className={
                       inFlight ? "bg-primary/20 text-primary border-primary/30 animate-pulse"
@@ -401,31 +447,19 @@ function Campaigns() {
                         <Zap className="w-4 h-4" />
                       </button>
                     )}
-                    {!isDone && !inFlight && (
-                      <button type="button" onClick={() => openEdit(c)} title="Editar"
-                        className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground transition-colors">
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    )}
-                    {isDone && c.sent_count < c.total_leads && (
-                      <button type="button" onClick={() => sendNow(c)} title="Reintentar fallidos"
-                        className="p-1.5 rounded-md hover:bg-warning/10 text-warning transition-colors">
-                        <Send className="w-4 h-4" />
-                      </button>
-                    )}
                     <button type="button" onClick={() => removeCampaign(c.id)} title="Eliminar"
                       className="p-1.5 rounded-md hover:bg-destructive/10 text-destructive transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{c.message_body}</p>
+                <p className="text-sm text-muted-foreground line-clamp-2">{c.message_body}</p>
                 {inFlight && (
-                  <div className="mb-3">
+                  <div className="mb-2">
                     <Progress value={progressPct} className="h-1.5" />
                   </div>
                 )}
-                <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap pt-1">
                   <span className="flex items-center gap-1">
                     <Users className="w-3 h-3" />
                     {isDone || inFlight ? `${c.sent_count}/${c.total_leads} enviados` : `${c.total_leads} destinatarios`}
@@ -442,37 +476,6 @@ function Campaigns() {
           })}
         </div>
       </div>
-
-      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="glass">
-          <DialogHeader>
-            <DialogTitle>Editar campaña</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Nombre</Label>
-              <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-            </div>
-            <div>
-              <Label>Mensaje</Label>
-              <Textarea rows={5} value={editForm.message_body}
-                onChange={(e) => setEditForm({ ...editForm, message_body: e.target.value })} />
-            </div>
-            <div>
-              <Label>Programación (hora local)</Label>
-              <Input type="datetime-local" value={editForm.schedule_time}
-                min={nowPlusMinLocal(1)}
-                onChange={(e) => setEditForm({ ...editForm, schedule_time: e.target.value })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>Cancelar</Button>
-            <Button onClick={saveEdit} className="gradient-brand text-background border-0">
-              <Send className="w-4 h-4 mr-1.5" /> Guardar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

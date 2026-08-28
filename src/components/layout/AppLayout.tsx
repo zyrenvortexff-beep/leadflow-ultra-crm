@@ -17,6 +17,7 @@ import {
   UsersRound,
   Sun,
   Moon,
+  User as UserIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ type NavItem = {
 
 const nav: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/profile", label: "Mi Perfil", icon: UserIcon },
   { to: "/whatsapp", label: "WhatsApp Hub", icon: Smartphone },
   { to: "/leads", label: "Leads", icon: Users },
   { to: "/contacts", label: "Contactos", icon: ContactIcon },
@@ -174,12 +176,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="p-4 border-t border-border space-y-2">
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="w-8 h-8 rounded-full gradient-brand flex items-center justify-center text-xs font-bold text-background">
-              {(profile?.full_name ?? "U").charAt(0).toUpperCase()}
+          <Link
+            to="/profile"
+            className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-secondary/60 transition-colors group"
+          >
+            <div className="w-8 h-8 rounded-full gradient-brand flex items-center justify-center text-xs font-bold text-background overflow-hidden shrink-0">
+              {profile?.avatar ? (
+                <img src={profile.avatar} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                (profile?.full_name ?? "U").charAt(0).toUpperCase()
+              )}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{profile?.full_name ?? "Usuario"}</p>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{profile?.full_name ?? "Usuario"}</p>
               <p className="text-xs truncate">
                 <span
                   className={cn(
@@ -194,7 +203,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 </span>
               </p>
             </div>
-          </div>
+          </Link>
           <Button
             variant="ghost"
             size="sm"

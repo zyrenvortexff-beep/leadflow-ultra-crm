@@ -18,6 +18,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppWhatsappRouteImport } from './routes/_app.whatsapp'
 import { Route as AppSuperadminRouteImport } from './routes/_app.superadmin'
+import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppMessagesRouteImport } from './routes/_app.messages'
 import { Route as AppLeadsRouteImport } from './routes/_app.leads'
 import { Route as AppGroupsRouteImport } from './routes/_app.groups'
@@ -70,6 +71,11 @@ const AppWhatsappRoute = AppWhatsappRouteImport.update({
 const AppSuperadminRoute = AppSuperadminRouteImport.update({
   id: '/superadmin',
   path: '/superadmin',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProfileRoute = AppProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMessagesRoute = AppMessagesRouteImport.update({
@@ -134,6 +140,7 @@ export interface FileRoutesByFullPath {
   '/groups': typeof AppGroupsRoute
   '/leads': typeof AppLeadsRoute
   '/messages': typeof AppMessagesRoute
+  '/profile': typeof AppProfileRoute
   '/superadmin': typeof AppSuperadminRoute
   '/whatsapp': typeof AppWhatsappRoute
 }
@@ -153,6 +160,7 @@ export interface FileRoutesByTo {
   '/groups': typeof AppGroupsRoute
   '/leads': typeof AppLeadsRoute
   '/messages': typeof AppMessagesRoute
+  '/profile': typeof AppProfileRoute
   '/superadmin': typeof AppSuperadminRoute
   '/whatsapp': typeof AppWhatsappRoute
 }
@@ -174,6 +182,7 @@ export interface FileRoutesById {
   '/_app/groups': typeof AppGroupsRoute
   '/_app/leads': typeof AppLeadsRoute
   '/_app/messages': typeof AppMessagesRoute
+  '/_app/profile': typeof AppProfileRoute
   '/_app/superadmin': typeof AppSuperadminRoute
   '/_app/whatsapp': typeof AppWhatsappRoute
 }
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/leads'
     | '/messages'
+    | '/profile'
     | '/superadmin'
     | '/whatsapp'
   fileRoutesByTo: FileRoutesByTo
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/leads'
     | '/messages'
+    | '/profile'
     | '/superadmin'
     | '/whatsapp'
   id:
@@ -234,6 +245,7 @@ export interface FileRouteTypes {
     | '/_app/groups'
     | '/_app/leads'
     | '/_app/messages'
+    | '/_app/profile'
     | '/_app/superadmin'
     | '/_app/whatsapp'
   fileRoutesById: FileRoutesById
@@ -313,6 +325,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSuperadminRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/profile': {
+      id: '/_app/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AppProfileRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/messages': {
       id: '/_app/messages'
       path: '/messages'
@@ -389,6 +408,7 @@ interface AppRouteChildren {
   AppGroupsRoute: typeof AppGroupsRoute
   AppLeadsRoute: typeof AppLeadsRoute
   AppMessagesRoute: typeof AppMessagesRoute
+  AppProfileRoute: typeof AppProfileRoute
   AppSuperadminRoute: typeof AppSuperadminRoute
   AppWhatsappRoute: typeof AppWhatsappRoute
 }
@@ -403,6 +423,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppGroupsRoute: AppGroupsRoute,
   AppLeadsRoute: AppLeadsRoute,
   AppMessagesRoute: AppMessagesRoute,
+  AppProfileRoute: AppProfileRoute,
   AppSuperadminRoute: AppSuperadminRoute,
   AppWhatsappRoute: AppWhatsappRoute,
 }

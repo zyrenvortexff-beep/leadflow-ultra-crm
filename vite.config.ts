@@ -35,6 +35,7 @@ export default defineConfig({
         { route: '/functions/v1/meta-test', handler: path.resolve(__dirname, './server/routes/api/meta-test.ts') },
         { route: '/api/admin-users', handler: path.resolve(__dirname, './server/routes/api/admin-users.ts') },
         { route: '/functions/v1/admin-users', handler: path.resolve(__dirname, './server/routes/api/admin-users.ts') },
+        { route: '/api/whatsapp-profile', handler: path.resolve(__dirname, './server/routes/api/whatsapp-profile.ts') },
       ],
     }),
     viteReact(),

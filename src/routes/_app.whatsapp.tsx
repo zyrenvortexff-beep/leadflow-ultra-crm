@@ -43,7 +43,9 @@ function WhatsAppHub() {
   const [testTo, setTestTo] = useState("");
 
   const webhookUrl = organization?.id
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-webhook?org_id=${organization.id}`
+    ? (typeof window !== "undefined"
+        ? `${window.location.origin}/api/webhook/whatsapp?org_id=${organization.id}`
+        : `https://leadflow-ultra-crm.zyrenvortexff.workers.dev/api/webhook/whatsapp?org_id=${organization.id}`)
     : "";
 
   const reload = async () => {

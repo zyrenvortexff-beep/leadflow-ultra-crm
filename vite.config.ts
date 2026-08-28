@@ -24,6 +24,10 @@ export default defineConfig({
     tanstackStart(),
     nitro({
       preset: 'cloudflare-module',
+      handlers: [
+        { route: '/api/webhook/whatsapp', handler: path.resolve(__dirname, './server/routes/api/webhook/whatsapp.ts') },
+        { route: '/functions/v1/whatsapp-webhook', handler: path.resolve(__dirname, './server/routes/api/webhook/whatsapp.ts') },
+      ],
     }),
     viteReact(),
     tailwindcss(),

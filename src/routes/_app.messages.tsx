@@ -36,6 +36,7 @@ import {
   pruneCacheOlderThanDays,
   type CachedMsg,
 } from "@/lib/messages-cache";
+import { AudioMp3Recorder } from "@/lib/audio-recorder";
 
 export const Route = createFileRoute("/_app/messages")({
   component: MessagesPage,
@@ -211,10 +212,8 @@ function MessagesPage() {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const [uploadingAudio, setUploadingAudio] = useState(false);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recorderRef = useRef<AudioMp3Recorder | null>(null);
   const recordingTimerRef = useRef<number | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -452,7 +451,6 @@ function MessagesPage() {
     setAudioBlob(file);
     setAudioPreviewUrl(URL.createObjectURL(file));
   };
-
   const clearAudio = () => {
     setAudioBlob(null);
     if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
@@ -460,44 +458,13 @@ function MessagesPage() {
     if (audioFileInputRef.current) audioFileInputRef.current.value = "";
   };
 
-  // Grabador de Micrófono
+  // Grabador de Micrófono con Codificador MP3 Real (audio/mpeg)
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new AudioMp3Recorder();
+      recorderRef.current = rec;
+      await rec.start();
 
-      let mimeType = "audio/ogg; codecs=opus";
-      if (MediaRecorder.isTypeSupported("audio/ogg; codecs=opus")) {
-        mimeType = "audio/ogg; codecs=opus";
-      } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
-        mimeType = "audio/mp4";
-      } else if (MediaRecorder.isTypeSupported("audio/aac")) {
-        mimeType = "audio/aac";
-      } else if (MediaRecorder.isTypeSupported("audio/ogg")) {
-        mimeType = "audio/ogg";
-      } else {
-        mimeType = "audio/ogg";
-      }
-
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        // Garantizar que el blob se cree con un tipo MIME aceptado por Meta (audio/ogg u audio/mp4)
-        const finalMime = mimeType.includes("mp4") ? "audio/mp4" : "audio/ogg; codecs=opus";
-        const blob = new Blob(audioChunksRef.current, { type: finalMime });
-        setAudioBlob(blob);
-        setAudioPreviewUrl(URL.createObjectURL(blob));
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      mediaRecorder.start();
       setIsRecording(true);
       setRecordingSeconds(0);
 
@@ -509,25 +476,33 @@ function MessagesPage() {
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+  const stopRecording = async () => {
+    if (recorderRef.current && isRecording) {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      try {
+        toast.info("Codificando nota de voz MP3...");
+        const { blob, url } = await recorderRef.current.stop();
+        setAudioBlob(blob);
+        setAudioPreviewUrl(url);
+        toast.success("✓ Nota de voz lista");
+      } catch (e: any) {
+        toast.error("Error al procesar audio: " + (e?.message || ""));
       }
     }
   };
 
   const cancelRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+    if (recorderRef.current && isRecording) {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
+      recorderRef.current.cancel();
+      setIsRecording(false);
       clearAudio();
     }
   };
@@ -570,9 +545,10 @@ function MessagesPage() {
       }
     } else if (audioBlob) {
       setUploadingAudio(true);
+      const isMp3 = audioBlob.type.includes("mpeg") || audioBlob.type.includes("mp3");
       const isMp4 = audioBlob.type.includes("mp4") || audioBlob.type.includes("aac");
-      const ext = isMp4 ? "mp4" : "ogg";
-      const mime = isMp4 ? "audio/mp4" : "audio/ogg; codecs=opus";
+      const ext = isMp3 ? "mp3" : isMp4 ? "mp4" : "ogg";
+      const mime = isMp3 ? "audio/mpeg" : isMp4 ? "audio/mp4" : "audio/ogg; codecs=opus";
       mediaUrlToSend = await uploadMediaBlob(audioBlob, ext, mime);
       mediaTypeToSend = "audio";
       setUploadingAudio(false);

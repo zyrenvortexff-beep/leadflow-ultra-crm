@@ -24,7 +24,9 @@ import {
   Briefcase,
   Info,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  Smartphone,
+  Sparkles
 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/profile")({
@@ -39,6 +41,10 @@ type MetaProfile = {
   profile_picture_url?: string;
   websites?: string[];
   vertical?: string;
+  display_phone_number?: string;
+  verified_name?: string;
+  quality_rating?: string;
+  name_status?: string;
 };
 
 const VERTICAL_OPTIONS = [
@@ -84,11 +90,18 @@ function ProfilePage() {
     profile_picture_url: "",
     websites: ["", ""],
     vertical: "OTHER",
+    display_phone_number: "",
+    verified_name: "",
+    quality_rating: "",
   });
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [newMetaPhotoUrl, setNewMetaPhotoUrl] = useState("");
+  const [uploadingMetaPhoto, setUploadingMetaPhoto] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [savingMeta, setSavingMeta] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const metaPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (profile) {
@@ -116,7 +129,12 @@ function ProfilePage() {
           profile_picture_url: p.profile_picture_url || "",
           websites: [p.websites?.[0] || "", p.websites?.[1] || ""],
           vertical: p.vertical || "OTHER",
+          display_phone_number: p.display_phone_number || "",
+          verified_name: p.verified_name || "",
+          quality_rating: p.quality_rating || "GREEN",
+          name_status: p.name_status || "",
         });
+        setNewDisplayName(p.verified_name || "");
       }
     } catch (e) {
       console.warn("[meta-profile] load error:", e);
@@ -156,18 +174,47 @@ function ProfilePage() {
     }
   };
 
+  const handleMetaPhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !organization) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Por favor selecciona una imagen válida para WhatsApp");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("La imagen de WhatsApp debe pesar menos de 5MB");
+      return;
+    }
+
+    setUploadingMetaPhoto(true);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const filePath = `${organization.id}/wa_profile_${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+      if (error) throw error;
+      const { data: pubUrl } = supabase.storage.from("crm-media").getPublicUrl(data.path);
+      setNewMetaPhotoUrl(pubUrl.publicUrl);
+      toast.success("Foto seleccionada. Haz clic en 'Sincronizar con Meta WhatsApp' para aplicar el cambio.");
+    } catch (e: any) {
+      toast.error("Error al preparar la foto: " + (e?.message || ""));
+    } finally {
+      setUploadingMetaPhoto(false);
+    }
+  };
+
   const saveUserProfile = async () => {
     if (!user) return;
     setSavingUser(true);
     try {
-      // 1. Update Profile
       const { error: pErr } = await supabase
         .from("profiles")
         .update({ full_name: fullName.trim(), avatar: avatarUrl })
         .eq("user_id", user.id);
       if (pErr) throw pErr;
 
-      // 2. Update Organization Name if admin
       if (organization && orgName.trim()) {
         await supabase
           .from("organizations")
@@ -175,7 +222,7 @@ function ProfilePage() {
           .eq("id", organization.id);
       }
 
-      toast.success("✓ Perfil actualizado correctamente");
+      toast.success("✓ Perfil de usuario actualizado correctamente");
     } catch (e: any) {
       toast.error("Error al guardar: " + (e?.message || ""));
     } finally {
@@ -210,24 +257,35 @@ function ProfilePage() {
     if (!organization) return;
     setSavingMeta(true);
     try {
+      const payload: Record<string, any> = {
+        org_id: organization.id,
+        about: metaProfile.about,
+        description: metaProfile.description,
+        address: metaProfile.address,
+        email: metaProfile.email,
+        vertical: metaProfile.vertical,
+        websites: metaProfile.websites?.filter(Boolean),
+      };
+
+      if (newMetaPhotoUrl) {
+        payload.photo_url = newMetaPhotoUrl;
+      }
+      if (newDisplayName && newDisplayName.trim() !== metaProfile.verified_name) {
+        payload.new_display_name = newDisplayName.trim();
+      }
+
       const res = await fetch("/api/whatsapp-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          org_id: organization.id,
-          about: metaProfile.about,
-          description: metaProfile.description,
-          address: metaProfile.address,
-          email: metaProfile.email,
-          vertical: metaProfile.vertical,
-          websites: metaProfile.websites?.filter(Boolean),
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || "Error al actualizar perfil de WhatsApp en Meta");
       }
-      toast.success("✓ Perfil comercial de WhatsApp sincronizado con Meta");
+
+      toast.success("✓ Perfil oficial de WhatsApp sincronizado y actualizado con Meta");
+      setNewMetaPhotoUrl("");
       loadMetaProfile(organization.id);
     } catch (e: any) {
       toast.error(e?.message || "Error al guardar en Meta");
@@ -241,7 +299,7 @@ function ProfilePage() {
       <BackToDashboard />
       <PageHeader
         title="Mi Perfil & Configuración"
-        subtitle="Administra tu información de cuenta, seguridad y el perfil comercial visible en WhatsApp"
+        subtitle="Administra tu cuenta de acceso y la información oficial de tu número de WhatsApp Business"
       />
 
       <Tabs defaultValue="user" className="space-y-6">
@@ -259,7 +317,6 @@ function ProfilePage() {
         {/* TAB 1: PERFIL DE USUARIO */}
         <TabsContent value="user" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Tarjeta de Avatar y Resumen */}
             <div className="bg-card border border-border/40 rounded-xl p-6 flex flex-col items-center text-center space-y-4 shadow-sm">
               <div className="relative group">
                 <div className="w-28 h-28 rounded-full border-2 border-primary/40 overflow-hidden bg-muted flex items-center justify-center shadow-inner">
@@ -309,7 +366,6 @@ function ProfilePage() {
               </div>
             </div>
 
-            {/* Formulario de Datos Personales */}
             <div className="md:col-span-2 bg-card border border-border/40 rounded-xl p-6 space-y-6 shadow-sm">
               <h3 className="text-base font-semibold border-b border-border/30 pb-3 flex items-center gap-2">
                 <UserIcon className="w-4 h-4 text-primary" />
@@ -354,7 +410,6 @@ function ProfilePage() {
             </div>
           </div>
 
-          {/* Cambio de Contraseña */}
           <div className="bg-card border border-border/40 rounded-xl p-6 space-y-4 shadow-sm">
             <h3 className="text-base font-semibold border-b border-border/30 pb-3 flex items-center gap-2">
               <Lock className="w-4 h-4 text-primary" />
@@ -403,10 +458,10 @@ function ProfilePage() {
               <div>
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                   <Briefcase className="w-5 h-5 text-emerald-500" />
-                  Perfil Comercial de WhatsApp
+                  Perfil Oficial de WhatsApp Business
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Esta información es la que ven tus clientes cuando abren el perfil de tu número en WhatsApp.
+                  Cambia la foto, nombre visible y descripción de tu número en WhatsApp vía Meta Graph API.
                 </p>
               </div>
 
@@ -428,24 +483,87 @@ function ProfilePage() {
                 <Skeleton className="h-10 w-full" />
               </div>
             ) : (
-              <div className="space-y-5">
-                {metaProfile.profile_picture_url && (
-                  <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg border border-border/30">
-                    <img
-                      src={metaProfile.profile_picture_url}
-                      alt="WhatsApp Profile"
-                      className="w-16 h-16 rounded-full border border-border/50 object-cover"
-                    />
-                    <div>
-                      <p className="text-sm font-medium">Foto oficial de WhatsApp Business</p>
-                      <p className="text-xs text-muted-foreground">
-                        Sincronizada con Meta Cloud API
-                      </p>
+              <div className="space-y-6">
+                {/* 1. SECCIÓN DE FOTO DE WHATSAPP */}
+                <div className="p-4 bg-muted/20 border border-border/40 rounded-xl flex flex-col sm:flex-row items-center gap-5">
+                  <div className="relative group shrink-0">
+                    <div className="w-24 h-24 rounded-full border-2 border-emerald-500/40 overflow-hidden bg-background flex items-center justify-center shadow-md">
+                      {newMetaPhotoUrl || metaProfile.profile_picture_url ? (
+                        <img
+                          src={newMetaPhotoUrl || metaProfile.profile_picture_url}
+                          alt="WhatsApp Profile"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Smartphone className="w-10 h-10 text-muted-foreground" />
+                      )}
                     </div>
+                    <input
+                      type="file"
+                      ref={metaPhotoInputRef}
+                      onChange={handleMetaPhotoSelect}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => metaPhotoInputRef.current?.click()}
+                      disabled={uploadingMetaPhoto}
+                      className="absolute bottom-0 right-0 p-2 bg-emerald-600 text-white rounded-full shadow-lg hover:bg-emerald-700 transition-colors"
+                      title="Cambiar foto de WhatsApp"
+                    >
+                      {uploadingMetaPhoto ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Camera className="w-4 h-4" />
+                      )}
+                    </button>
                   </div>
-                )}
 
+                  <div className="space-y-1 text-center sm:text-left">
+                    <div className="flex items-center justify-center sm:justify-start gap-2">
+                      <h4 className="font-semibold text-base">Foto de Perfil de WhatsApp</h4>
+                      {newMetaPhotoUrl ? (
+                        <Badge className="bg-amber-500 text-white text-[10px]">Nueva foto lista</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-emerald-500 border-emerald-500/30 text-[10px]">
+                          Sincronizada con Meta
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Haz clic en el icono de la cámara para subir una nueva foto. Se actualizará en el WhatsApp de tus clientes.
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. DATOS COMERCIALES */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Nombre para mostrar de WhatsApp */}
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                        Nombre Visible en WhatsApp (Display Name)
+                      </span>
+                      {metaProfile.quality_rating && (
+                        <Badge variant="outline" className="text-[10px] text-emerald-500">
+                          Salud: {metaProfile.quality_rating}
+                        </Badge>
+                      )}
+                    </Label>
+                    <Input
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      placeholder="Ej: LeadFlow, Mi Tienda Oficial..."
+                      className="font-medium"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Este es el nombre con el que tus clientes te verán en WhatsApp.
+                    </p>
+                  </div>
+
+                  {/* Info / Estado ("About") */}
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label className="flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
@@ -460,13 +578,14 @@ function ProfilePage() {
                       value={metaProfile.about || ""}
                       maxLength={139}
                       onChange={(e) => setMetaProfile({ ...metaProfile, about: e.target.value })}
-                      placeholder="Ej: ¡Hola! Estamos disponibles de Lunes a Sábado de 8am a 6pm."
+                      placeholder="Ej: ¡Hola! Estamos disponibles para ayudarte hoy."
                     />
                   </div>
 
+                  {/* Descripción Comercial */}
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label className="flex items-center justify-between">
-                      <span>Descripción Comercial</span>
+                      <span>Descripción Comercial del Negocio</span>
                       <span className="text-xs text-muted-foreground">
                         {metaProfile.description?.length || 0} / 512
                       </span>
@@ -476,11 +595,12 @@ function ProfilePage() {
                       value={metaProfile.description || ""}
                       maxLength={512}
                       onChange={(e) => setMetaProfile({ ...metaProfile, description: e.target.value })}
-                      placeholder="Describe los productos, servicios o propuesta de valor de tu negocio..."
+                      placeholder="Describe los productos, servicios o propuesta de valor de tu empresa..."
                       className="resize-none"
                     />
                   </div>
 
+                  {/* Categoría */}
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5">
                       <Briefcase className="w-3.5 h-3.5 text-muted-foreground" />
@@ -499,6 +619,7 @@ function ProfilePage() {
                     </select>
                   </div>
 
+                  {/* Email */}
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5">
                       <Mail className="w-3.5 h-3.5 text-muted-foreground" />
@@ -512,6 +633,7 @@ function ProfilePage() {
                     />
                   </div>
 
+                  {/* Website 1 */}
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5">
                       <Globe className="w-3.5 h-3.5 text-muted-foreground" />
@@ -528,6 +650,7 @@ function ProfilePage() {
                     />
                   </div>
 
+                  {/* Website 2 */}
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5">
                       <Globe className="w-3.5 h-3.5 text-muted-foreground" />
@@ -544,6 +667,7 @@ function ProfilePage() {
                     />
                   </div>
 
+                  {/* Dirección */}
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label className="flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5 text-muted-foreground" />

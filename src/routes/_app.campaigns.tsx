@@ -13,30 +13,16 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
   Calendar, Users, Zap, Trash2, Clock, CheckCircle2, Lock,
-  Contact as ContactIcon, Pencil, Send, Image as ImageIcon, Loader2, X
+  Contact as ContactIcon, Pencil, Send, Image as ImageIcon, Loader2, X,
+  Timer
 } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 
 function localInputToUtcIso(localStr: string): string | null {
   if (!localStr) return null;
   const d = new Date(localStr);
   return isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function utcIsoToLocalInput(isoStr: string | null): string {
-  if (!isoStr) return "";
-  const d = new Date(isoStr);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function defaultScheduleLocal(): string {
@@ -65,6 +51,7 @@ interface Campaign {
   audience_type?: string;
   contact_ids?: string[];
   manual_numbers?: string[];
+  delay_seconds?: number;
 }
 
 interface ContactRow { id: string; name: string; phone: string }
@@ -80,9 +67,9 @@ function Campaigns() {
   const [manualNumbers, setManualNumbers] = useState("");
   const [audience, setAudience] = useState<"contacts" | "manual">("contacts");
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Campaign | null>(null);
   const [clockNow, setClockNow] = useState(Date.now());
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [form, setForm] = useState({
@@ -91,6 +78,7 @@ function Campaigns() {
     media_url: "",
     target_tags: [] as string[],
     schedule_time: defaultScheduleLocal(),
+    delay_seconds: 5,
   });
 
   useEffect(() => {
@@ -111,6 +99,7 @@ function Campaigns() {
           name: next.name,
           message_body: next.message_body,
           media_url: next.media_url,
+          delay_seconds: next.delay_seconds,
         }));
       } catch { /* ignore */ }
       return next;
@@ -160,10 +149,41 @@ function Campaigns() {
 
   useEffect(() => { load(); }, [organization]);
 
+  // Temporizador de reloj en vivo
   useEffect(() => {
     const tick = window.setInterval(() => setClockNow(Date.now()), 1000);
     return () => window.clearInterval(tick);
   }, []);
+
+  // AUTO-DESPACHADOR AUTOMÁTICO EN VIVO
+  useEffect(() => {
+    if (!organization?.id || isDispatching) return;
+
+    const checkAndAutoDispatch = async () => {
+      const dueCampaigns = list.filter((c) => {
+        if (c.status !== "scheduled" || !c.schedule_time) return false;
+        const targetTime = new Date(c.schedule_time).getTime();
+        return targetTime <= Date.now();
+      });
+
+      if (dueCampaigns.length > 0) {
+        setIsDispatching(true);
+        for (const c of dueCampaigns) {
+          try {
+            toast.info(`🚀 Despachando automáticamente campaña: "${c.name}"...`);
+            await invokeFunction("campaigns-dispatch", { campaign_id: c.id });
+          } catch (e) {
+            console.error("[auto-dispatch] error:", e);
+          }
+        }
+        await load();
+        setIsDispatching(false);
+      }
+    };
+
+    const autoDispatchInterval = window.setInterval(checkAndAutoDispatch, 10000);
+    return () => window.clearInterval(autoDispatchInterval);
+  }, [list, organization?.id, isDispatching]);
 
   const nextCheckIn = useMemo(() => {
     const remaining = 60 - Math.floor((clockNow / 1000) % 60);
@@ -173,7 +193,7 @@ function Campaigns() {
   const formatRemaining = (iso: string | null) => {
     if (!iso) return null;
     const seconds = Math.max(0, Math.ceil((new Date(iso).getTime() - clockNow) / 1000));
-    if (seconds <= 0) return "lista para enviar";
+    if (seconds <= 0) return "despachando...";
     if (seconds < 60) return `en ${seconds}s`;
     const minutes = Math.floor(seconds / 60);
     const rest = seconds % 60;
@@ -188,11 +208,8 @@ function Campaigns() {
       .channel(`campaigns-${organization.id}`)
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "campaigns", filter: `org_id=eq.${organization.id}` },
-        (payload) => {
-          const updated = payload.new as Campaign;
-          setList((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)));
-        },
+        { event: "*", schema: "public", table: "campaigns", filter: `org_id=eq.${organization.id}` },
+        () => { load(); }
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -244,6 +261,7 @@ function Campaigns() {
       audience_type: audience,
       contact_ids: audience === "contacts" ? selectedContacts : [],
       manual_numbers: manualList,
+      delay_seconds: Number(form.delay_seconds) || 5,
     };
   };
 
@@ -255,6 +273,7 @@ function Campaigns() {
       media_url: "",
       target_tags: [],
       schedule_time: defaultScheduleLocal(),
+      delay_seconds: 5,
     });
     setSelectedContacts([]);
     setManualNumbers("");
@@ -269,7 +288,7 @@ function Campaigns() {
     if (!payload) return;
     const { error } = await supabase.from("campaigns").insert(payload);
     if (error) return toast.error(error.message);
-    toast.success(`Campaña programada (${payload.total_leads} destinatarios)`);
+    toast.success(`Campaña programada (${payload.total_leads} destinatarios, cada ${payload.delay_seconds}s)`);
     resetForm();
     load();
   };
@@ -281,7 +300,7 @@ function Campaigns() {
     if (!payload) return;
     const { data: inserted, error } = await supabase.from("campaigns").insert(payload).select().single();
     if (error || !inserted) return toast.error(error?.message ?? "Error");
-    toast.success("Enviando campaña masiva ahora…");
+    toast.success("Iniciando despacho de campaña masiva…");
     const { error: fnErr } = await invokeFunction("campaigns-dispatch", {
       campaign_id: inserted.id,
     });
@@ -303,14 +322,10 @@ function Campaigns() {
     const { error } = await supabase.from("campaigns")
       .update({ status: "scheduled", schedule_time: new Date().toISOString() }).eq("id", c.id);
     if (error) return toast.error(error.message);
+    toast.success("Despachando campaña ahora…");
     const { error: fnErr } = await invokeFunction("campaigns-dispatch", { campaign_id: c.id });
     if (fnErr) return toast.error("Error al disparar el envío: " + (fnErr.message || fnErr));
-    toast.success("Enviando campaña ahora…");
     setTimeout(load, 1500);
-  };
-
-  const openEdit = (c: Campaign) => {
-    setEditing(c);
   };
 
   const scheduleDisabled = usage?.reached || Boolean(form.schedule_time && form.schedule_time < minScheduleLocal);
@@ -409,12 +424,35 @@ function Campaigns() {
                 rows={3} placeholder={"+50499887766\n+50488776655"} className="mt-3 font-mono text-xs" />
             )}
           </div>
-          <div>
-            <Label>Programar envío (hora local)</Label>
-            <Input type="datetime-local" value={form.schedule_time}
-              min={minScheduleLocal} step={60}
-              onChange={(e) => setForm({ ...form, schedule_time: e.target.value })} className="mt-1" />
+
+          {/* Configuración de Intervalo / Retardo por contacto */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="flex items-center gap-1">
+                <Timer className="w-3.5 h-3.5 text-primary" />
+                Pausa entre contactos
+              </Label>
+              <select
+                value={form.delay_seconds}
+                onChange={(e) => updateForm({ delay_seconds: Number(e.target.value) })}
+                className="w-full h-10 px-3 py-2 mt-1 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value={3}>3 segundos (Rápido)</option>
+                <option value={5}>5 segundos (Recomendado)</option>
+                <option value={8}>8 segundos (Seguro)</option>
+                <option value={15}>15 segundos (Anti-spam)</option>
+                <option value={30}>30 segundos (Máxima seguridad)</option>
+              </select>
+            </div>
+
+            <div>
+              <Label>Programar envío (hora local)</Label>
+              <Input type="datetime-local" value={form.schedule_time}
+                min={minScheduleLocal} step={60}
+                onChange={(e) => setForm({ ...form, schedule_time: e.target.value })} className="mt-1" />
+            </div>
           </div>
+
           {usage && !usage.unlimited && (
             <div>
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
@@ -439,7 +477,7 @@ function Campaigns() {
           <div className="flex items-center justify-between gap-3 px-2">
             <h3 className="font-bold text-lg">Historial de Campañas</h3>
             <Badge variant="secondary" className="gap-1.5 whitespace-nowrap text-xs">
-              <Clock className="w-3 h-3" /> Auto-despacho en {nextCheckIn}s
+              <Clock className="w-3 h-3 text-emerald-500 animate-spin" /> Auto-despacho activo ({nextCheckIn}s)
             </Badge>
           </div>
           {loading && Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}
@@ -490,6 +528,12 @@ function Campaigns() {
                     <Users className="w-3 h-3" />
                     {isDone || inFlight ? `${c.sent_count}/${c.total_leads} enviados` : `${c.total_leads} destinatarios`}
                   </span>
+                  {c.delay_seconds && (
+                    <span className="flex items-center gap-1 text-muted-foreground font-mono">
+                      <Timer className="w-3 h-3 text-primary" />
+                      {c.delay_seconds}s entre mensajes
+                    </span>
+                  )}
                   {c.schedule_time && (
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />

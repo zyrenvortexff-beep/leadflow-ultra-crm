@@ -87,7 +87,7 @@ export default defineEventHandler(async (event) => {
 
   const results: Record<string, unknown>[] = [];
   const startedAt = Date.now();
-  const MAX_RUN_MS = 50_000;
+  const MAX_RUN_MS = 55_000;
 
   for (const c of campaigns ?? []) {
     const { error: lockErr } = await admin
@@ -101,7 +101,7 @@ export default defineEventHandler(async (event) => {
     }
 
     const recipients: { phone: string; name: string | null }[] = [];
-    const audience = (c as any).audience_type || "leads";
+    const audience = (c as any).audience_type || "contacts";
 
     if (audience === "contacts") {
       const ids: string[] = (c as any).contact_ids ?? [];
@@ -127,6 +127,9 @@ export default defineEventHandler(async (event) => {
     let failed = 0;
     let timedOut = false;
 
+    // Respetar tiempo de espera por contacto (Delay en segundos)
+    const delayBetweenMs = Math.max(1000, Number(c.delay_seconds || 5) * 1000);
+
     await admin
       .from("campaigns")
       .update({ status: "scheduled", total_leads: valid.length })
@@ -149,7 +152,8 @@ export default defineEventHandler(async (event) => {
 
     const pending = valid.slice(alreadySent);
 
-    for (const r of pending) {
+    for (let i = 0; i < pending.length; i++) {
+      const r = pending[i];
       if (Date.now() - startedAt > MAX_RUN_MS) {
         timedOut = true;
         break;
@@ -188,7 +192,7 @@ export default defineEventHandler(async (event) => {
         const title = errPayload.message || errPayload.title || "Error de Meta";
         const hint =
           code === "131047" ? "Ventana de 24h cerrada. Usa una plantilla aprobada o espera respuesta del cliente." :
-          code === "131005" ? "Access denied: revisa que el Access Token tenga el permiso whatsapp_business_messaging y esté vigente." :
+          code === "131005" ? "Access denied: revisa que el Access Token tenga el permiso whatsapp_business_messaging." :
           code === "131026" ? "Mensaje no entregable (número no apto para WhatsApp Business)." : null;
         await admin.from("messages_log").insert({
           org_id: c.org_id, direction: "outbound", content: messageBody, media_url: c.media_url || null,
@@ -209,7 +213,10 @@ export default defineEventHandler(async (event) => {
         await admin.from("campaigns").update({ sent_count: sent }).eq("id", c.id);
       }
 
-      await new Promise((res) => setTimeout(res, 3000));
+      // Esperar el tiempo exacto configurado entre cada contacto (si no es el último)
+      if (i < pending.length - 1) {
+        await new Promise((res) => setTimeout(res, delayBetweenMs));
+      }
     }
 
     if (timedOut) {

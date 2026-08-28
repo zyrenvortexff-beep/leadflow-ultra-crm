@@ -463,6 +463,12 @@ export default defineEventHandler(async (event) => {
     return { ok: true, matched: true, sent: false, error: "missing_meta_config" };
   }
 
+  // Respetar tiempo de espera / delay configurado en la automatización (ej: 2s, 5s)
+  const delaySec = Math.min(30, Math.max(0, Number(matched.delay_seconds) || 0));
+  if (delaySec > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+  }
+
   const send = await sendMetaMessage({
     phoneNumberId: metaCfg.phone_number_id,
     accessToken: metaCfg.access_token,

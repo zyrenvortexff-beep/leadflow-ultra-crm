@@ -464,7 +464,21 @@ function MessagesPage() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+
+      let mimeType = "audio/ogg; codecs=opus";
+      if (MediaRecorder.isTypeSupported("audio/ogg; codecs=opus")) {
+        mimeType = "audio/ogg; codecs=opus";
+      } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+        mimeType = "audio/mp4";
+      } else if (MediaRecorder.isTypeSupported("audio/aac")) {
+        mimeType = "audio/aac";
+      } else if (MediaRecorder.isTypeSupported("audio/ogg")) {
+        mimeType = "audio/ogg";
+      } else {
+        mimeType = "audio/ogg";
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -475,8 +489,9 @@ function MessagesPage() {
       };
 
       mediaRecorder.onstop = () => {
-        const mimeType = mediaRecorder.mimeType || "audio/ogg; codecs=opus";
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        // Garantizar que el blob se cree con un tipo MIME aceptado por Meta (audio/ogg u audio/mp4)
+        const finalMime = mimeType.includes("mp4") ? "audio/mp4" : "audio/ogg; codecs=opus";
+        const blob = new Blob(audioChunksRef.current, { type: finalMime });
         setAudioBlob(blob);
         setAudioPreviewUrl(URL.createObjectURL(blob));
         stream.getTracks().forEach((track) => track.stop());
@@ -555,8 +570,10 @@ function MessagesPage() {
       }
     } else if (audioBlob) {
       setUploadingAudio(true);
-      const ext = audioBlob.type.includes("ogg") ? "ogg" : audioBlob.type.includes("mp3") ? "mp3" : "webm";
-      mediaUrlToSend = await uploadMediaBlob(audioBlob, ext, audioBlob.type || "audio/ogg");
+      const isMp4 = audioBlob.type.includes("mp4") || audioBlob.type.includes("aac");
+      const ext = isMp4 ? "mp4" : "ogg";
+      const mime = isMp4 ? "audio/mp4" : "audio/ogg; codecs=opus";
+      mediaUrlToSend = await uploadMediaBlob(audioBlob, ext, mime);
       mediaTypeToSend = "audio";
       setUploadingAudio(false);
       if (!mediaUrlToSend) {

@@ -23,7 +23,7 @@ export default defineConfig({
   plugins: [
     tanstackStart(),
     nitro({
-      preset: 'cloudflare-pages',
+      preset: 'cloudflare-module',
     }),
     viteReact(),
     tailwindcss(),

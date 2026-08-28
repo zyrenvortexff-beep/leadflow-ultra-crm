@@ -1,7 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "leadflow-crm",
+  "name": "leadflow-ultra-crm",
+  "main": ".output/server/index.mjs",
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
-  "pages_build_output_dir": "dist"
+  "assets": {
+    "directory": ".output/public",
+    "binding": "ASSETS"
+  }
 }

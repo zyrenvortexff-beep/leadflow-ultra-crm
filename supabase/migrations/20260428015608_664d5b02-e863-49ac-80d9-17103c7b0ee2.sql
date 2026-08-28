@@ -1,0 +1,1 @@
+ALTER TABLE public.automations ADD COLUMN IF NOT EXISTS tag_to_apply text;

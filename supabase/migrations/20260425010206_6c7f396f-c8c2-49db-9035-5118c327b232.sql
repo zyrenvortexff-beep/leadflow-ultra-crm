@@ -1,0 +1,1 @@
+UPDATE public.whatsapp_configs SET provider_type = 'Evolution_VPS', updated_at = now() WHERE provider_type IN ('Whapi','ZAPI');

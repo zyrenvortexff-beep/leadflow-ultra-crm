@@ -92,6 +92,30 @@ function Campaigns() {
     schedule_time: defaultScheduleLocal(),
   });
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("leadflow_draft_campaign");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setForm((prev) => ({ ...prev, ...parsed, schedule_time: defaultScheduleLocal() }));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const updateForm = (patch: Partial<typeof form>) => {
+    setForm((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem("leadflow_draft_campaign", JSON.stringify({
+          name: next.name,
+          message_body: next.message_body,
+          media_url: next.media_url,
+        }));
+      } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   const minScheduleLocal = useMemo(() => nowPlusMinLocal(1), []);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -223,6 +247,7 @@ function Campaigns() {
   };
 
   const resetForm = () => {
+    try { localStorage.removeItem("leadflow_draft_campaign"); } catch { /* ignore */ }
     setForm({
       name: "",
       message_body: "Hola {nombre_cliente}, tenemos una promoción especial para ti 🎉",
@@ -302,11 +327,11 @@ function Campaigns() {
           <h3 className="font-bold text-lg">Nueva Campaña</h3>
           <div>
             <Label>Nombre de la campaña</Label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Promo Primavera 2026" className="mt-1" />
+            <Input value={form.name} onChange={(e) => updateForm({ name: e.target.value })} placeholder="Promo Primavera 2026" className="mt-1" />
           </div>
           <div>
             <Label>Mensaje (o pie de foto si adjuntas imagen)</Label>
-            <Textarea value={form.message_body} onChange={(e) => setForm({ ...form, message_body: e.target.value })}
+            <Textarea value={form.message_body} onChange={(e) => updateForm({ message_body: e.target.value })}
               rows={4} placeholder="Usa {nombre_cliente} para personalizar" className="mt-1 resize-none" />
             <p className="text-xs text-muted-foreground mt-1">Variables disponibles: {"{nombre_cliente}"}, {"{telefono}"}</p>
           </div>
@@ -335,12 +360,12 @@ function Campaigns() {
             <div className="flex gap-2 items-center mt-1">
               <Input
                 value={form.media_url}
-                onChange={(e) => setForm({ ...form, media_url: e.target.value })}
+                onChange={(e) => updateForm({ media_url: e.target.value })}
                 placeholder="https://... o sube una imagen arriba"
                 className="text-xs font-mono"
               />
               {form.media_url && (
-                <Button type="button" variant="ghost" size="icon" onClick={() => setForm({ ...form, media_url: "" })} className="h-9 w-9 shrink-0">
+                <Button type="button" variant="ghost" size="icon" onClick={() => updateForm({ media_url: "" })} className="h-9 w-9 shrink-0">
                   <X className="w-4 h-4 text-muted-foreground" />
                 </Button>
               )}

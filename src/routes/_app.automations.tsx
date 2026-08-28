@@ -41,6 +41,35 @@ function Automations() {
     is_active: true,
     delay_seconds: 2,
   });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("leadflow_draft_automation");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setForm((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const updateForm = (patch: Partial<typeof form>) => {
+    setForm((prev) => {
+      const next = { ...prev, ...patch };
+      if (!editingId) {
+        try {
+          localStorage.setItem("leadflow_draft_automation", JSON.stringify({
+            trigger_keyword: next.trigger_keyword,
+            response_text: next.response_text,
+            media_url: next.media_url,
+            link_regalo: next.link_regalo,
+            tag_to_apply: next.tag_to_apply,
+          }));
+        } catch { /* ignore */ }
+      }
+      return next;
+    });
+  };
+
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [botActive, setBotActive] = useState<boolean | null>(null);
@@ -50,6 +79,7 @@ function Automations() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resetForm = () => {
+    try { localStorage.removeItem("leadflow_draft_automation"); } catch { /* ignore */ }
     setEditingId(null);
     setForm({
       trigger_keyword: "",
@@ -265,7 +295,7 @@ function Automations() {
               <Label>Palabra clave (disparador)</Label>
               <Input
                 value={form.trigger_keyword}
-                onChange={(e) => setForm({ ...form, trigger_keyword: e.target.value })}
+                onChange={(e) => updateForm({ trigger_keyword: e.target.value })}
                 placeholder="precio, info, catalogo, hola..."
                 className="mt-1"
               />
@@ -274,7 +304,7 @@ function Automations() {
               <Label>Mensaje de respuesta</Label>
               <Textarea
                 value={form.response_text}
-                onChange={(e) => setForm({ ...form, response_text: e.target.value })}
+                onChange={(e) => updateForm({ response_text: e.target.value })}
                 rows={4}
                 placeholder="Usa {nombre} para personalizar"
                 className="mt-1 resize-none"
@@ -304,7 +334,7 @@ function Automations() {
               </Label>
               <Input
                 value={form.media_url}
-                onChange={(e) => setForm({ ...form, media_url: e.target.value })}
+                onChange={(e) => updateForm({ media_url: e.target.value })}
                 placeholder="https://... o sube una imagen arriba"
                 className="mt-1 text-xs font-mono"
               />
@@ -313,7 +343,7 @@ function Automations() {
               <Label>Link regalo / CTA (opcional)</Label>
               <Input
                 value={form.link_regalo}
-                onChange={(e) => setForm({ ...form, link_regalo: e.target.value })}
+                onChange={(e) => updateForm({ link_regalo: e.target.value })}
                 placeholder="https://tu-link.com/regalo"
                 className="mt-1"
               />
@@ -322,7 +352,7 @@ function Automations() {
               <Label>Etiqueta a aplicar (opcional)</Label>
               <Input
                 value={form.tag_to_apply}
-                onChange={(e) => setForm({ ...form, tag_to_apply: e.target.value })}
+                onChange={(e) => updateForm({ tag_to_apply: e.target.value })}
                 placeholder="Ej: CURSO, PRECIO, INTERESADO"
                 className="mt-1"
               />

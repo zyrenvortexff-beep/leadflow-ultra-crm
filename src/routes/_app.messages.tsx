@@ -248,6 +248,25 @@ function Messages() {
     if (!activePhone && filteredConvs.length > 0) setActivePhone(filteredConvs[0].phone);
   }, [filteredConvs, activePhone]);
 
+  // Restore draft when activePhone changes
+  useEffect(() => {
+    if (!activePhone) return;
+    try {
+      const draft = localStorage.getItem(`leadflow_draft_msg_${activePhone}`);
+      if (draft !== null) setComposer(draft);
+    } catch { /* ignore */ }
+  }, [activePhone]);
+
+  const handleComposerChange = (val: string) => {
+    setComposer(val);
+    if (activePhone) {
+      try {
+        if (val) localStorage.setItem(`leadflow_draft_msg_${activePhone}`, val);
+        else localStorage.removeItem(`leadflow_draft_msg_${activePhone}`);
+      } catch { /* ignore */ }
+    }
+  };
+
   const thread = useMemo(() => {
     if (!activePhone) return [];
     return messages
@@ -352,6 +371,9 @@ function Messages() {
     };
     setMessages((prev) => [optimistic, ...prev]);
     setComposer("");
+    if (activePhone) {
+      try { localStorage.removeItem(`leadflow_draft_msg_${activePhone}`); } catch { /* ignore */ }
+    }
     clearImage();
 
     try {
@@ -748,7 +770,7 @@ function Messages() {
                   </Button>
                   <Textarea
                     value={composer}
-                    onChange={(e) => setComposer(e.target.value)}
+                    onChange={(e) => handleComposerChange(e.target.value)}
                     placeholder={selectedImage ? "Agrega un pie de foto (opcional)..." : "Escribe un mensaje..."}
                     rows={1}
                     className="resize-none min-h-[44px] max-h-32 bg-background/50"

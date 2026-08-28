@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { invokeFunction } from "@/lib/functions";
 import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -119,8 +120,10 @@ function WhatsAppHub() {
     }
     setTesting(true);
     try {
-      const { data, error } = await supabase.functions.invoke("whatsapp-handler", {
-        body: { user_id: user.id, numero: testTo.trim(), mensaje: "✅ Prueba desde tu CRM (Meta Cloud API)" },
+      const { data, error } = await invokeFunction("whatsapp-handler", {
+        user_id: user.id,
+        numero: testTo.trim(),
+        mensaje: "✅ Prueba desde tu CRM (Meta Cloud API)",
       });
       if (error) throw new Error(error.message);
       if ((data as any)?.ok) toast.success("Mensaje de prueba enviado");

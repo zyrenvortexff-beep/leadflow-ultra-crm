@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { invokeFunction } from "@/lib/functions";
 import {
   loadCachedMessages,
   saveCachedMessages,
@@ -377,13 +378,11 @@ function Messages() {
     clearImage();
 
     try {
-      const { data, error } = await supabase.functions.invoke("whatsapp-handler", {
-        body: {
-          user_id: user.id,
-          numero: phoneClean,
-          mensaje: text,
-          media_url: uploadedUrl || undefined,
-        },
+      const { data, error } = await invokeFunction("whatsapp-handler", {
+        user_id: user.id,
+        numero: phoneClean,
+        mensaje: text,
+        media_url: uploadedUrl || undefined,
       });
       if (error) throw new Error(error.message);
       const resp = data as any;

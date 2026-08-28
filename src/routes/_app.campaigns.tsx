@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { useDailyUsage } from "@/lib/use-daily-usage";
+import { invokeFunction } from "@/lib/functions";
 import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -281,10 +282,10 @@ function Campaigns() {
     const { data: inserted, error } = await supabase.from("campaigns").insert(payload).select().single();
     if (error || !inserted) return toast.error(error?.message ?? "Error");
     toast.success("Enviando campaña masiva ahora…");
-    const { error: fnErr } = await supabase.functions.invoke("campaigns-dispatch", {
-      body: { campaign_id: inserted.id },
+    const { error: fnErr } = await invokeFunction("campaigns-dispatch", {
+      campaign_id: inserted.id,
     });
-    if (fnErr) toast.error("Error al disparar el envío: " + fnErr.message);
+    if (fnErr) toast.error("Error al disparar el envío: " + (fnErr.message || fnErr));
     resetForm();
     setTimeout(load, 1500);
   };
@@ -302,8 +303,8 @@ function Campaigns() {
     const { error } = await supabase.from("campaigns")
       .update({ status: "scheduled", schedule_time: new Date().toISOString() }).eq("id", c.id);
     if (error) return toast.error(error.message);
-    const { error: fnErr } = await supabase.functions.invoke("campaigns-dispatch", { body: { campaign_id: c.id } });
-    if (fnErr) return toast.error("Error al disparar el envío: " + fnErr.message);
+    const { error: fnErr } = await invokeFunction("campaigns-dispatch", { campaign_id: c.id });
+    if (fnErr) return toast.error("Error al disparar el envío: " + (fnErr.message || fnErr));
     toast.success("Enviando campaña ahora…");
     setTimeout(load, 1500);
   };

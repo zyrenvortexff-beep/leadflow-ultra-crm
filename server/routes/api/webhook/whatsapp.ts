@@ -54,8 +54,17 @@ async function downloadAndStoreMetaMedia(opts: {
     if (!infoRes.ok) return null;
     const infoData = await infoRes.json();
     const downloadUrl = infoData?.url;
-    const mimeType = infoData?.mime_type || "image/jpeg";
-    const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+    const mimeType = (infoData?.mime_type || "image/jpeg").toLowerCase();
+    
+    let ext = "jpg";
+    if (mimeType.includes("ogg") || mimeType.includes("opus")) ext = "ogg";
+    else if (mimeType.includes("mpeg") || mimeType.includes("mp3")) ext = "mp3";
+    else if (mimeType.includes("mp4") || mimeType.includes("m4a")) ext = "m4a";
+    else if (mimeType.includes("wav")) ext = "wav";
+    else if (mimeType.includes("webm")) ext = "webm";
+    else if (mimeType.includes("png")) ext = "png";
+    else if (mimeType.includes("webp")) ext = "webp";
+
     if (!downloadUrl) return null;
 
     const fileRes = await fetch(downloadUrl, {
@@ -323,9 +332,19 @@ export default defineEventHandler(async (event) => {
         orgId,
       });
     }
-  } else if (message?.type === "video") text = message?.video?.caption || "[video]";
-  else if (message?.type === "audio") text = "[audio]";
-  else if (message?.type === "document") text = message?.document?.filename ? `[documento] ${message.document.filename}` : "[documento]";
+  } else if (message?.type === "video") {
+    text = message?.video?.caption || "[video]";
+  } else if (message?.type === "audio" || message?.type === "voice") {
+    text = "[audio]";
+    const audioId = message?.audio?.id || message?.voice?.id;
+    if (audioId && metaCfg?.access_token) {
+      mediaUrl = await downloadAndStoreMetaMedia({
+        mediaId: audioId,
+        accessToken: metaCfg.access_token,
+        orgId,
+      });
+    }
+  } else if (message?.type === "document") text = message?.document?.filename ? `[documento] ${message.document.filename}` : "[documento]";
   else if (message?.type === "sticker") text = "[sticker]";
   else if (message?.type === "location") text = "[ubicación]";
   else if (message?.type === "contacts") text = "[contacto]";

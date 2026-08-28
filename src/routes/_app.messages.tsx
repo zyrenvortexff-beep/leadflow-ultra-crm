@@ -2,107 +2,224 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Search,
+  Send,
+  Check,
+  CheckCheck,
+  Clock,
+  Phone,
+  Tag,
+  AlertCircle,
+  X,
+  Trash2,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Square,
+  Play,
+  Pause,
+  Music,
+  Volume2
+} from "lucide-react";
+import { toast } from "sonner";
 import { invokeFunction } from "@/lib/functions";
 import {
   loadCachedMessages,
   saveCachedMessages,
   getLastCachedTimestamp,
   pruneCacheOlderThanDays,
-  deleteCachedMessagesByRecipient,
   type CachedMsg,
 } from "@/lib/messages-cache";
-import { BackToDashboard, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
-import {
-  Send, Search, Check, CheckCheck, Clock, AlertCircle,
-  User as UserIcon, Loader2, Tag, Save, Phone, X, Trash2,
-  Image as ImageIcon, Paperclip, ExternalLink
-} from "lucide-react";
 
 export const Route = createFileRoute("/_app/messages")({
-  component: Messages,
+  component: MessagesPage,
 });
 
-interface Msg {
+type Msg = {
   id: string;
-  content: string | null;
+  org_id: string;
+  content: string;
   direction: "inbound" | "outbound";
   timestamp: string;
-  recipient: string | null;
-  status: string | null;
-  error_message: string | null;
-  keyword_matched: string | null;
-  automation_id: string | null;
+  recipient: string;
+  status?: "sent" | "delivered" | "read" | "failed" | "pending" | "received" | "blocked";
+  error_message?: string | null;
+  keyword_matched?: string | null;
+  automation_id?: string | null;
   media_url?: string | null;
-}
-
-interface LeadInfo {
-  id: string;
-  name: string;
-  phone: string;
-  email: string | null;
-  notes: string | null;
-  tags: string[] | null;
-  status: "nuevo" | "interesado" | "cliente" | "perdido";
-}
-
-interface ContactInfo {
-  id: string;
-  name: string;
-  phone: string;
-  tags: string[] | null;
-  notes: string | null;
-}
-
-interface Conversation {
-  phone: string;
-  displayName: string;
-  lastMessage: string;
-  lastTs: string;
-  unread: number;
-  inbound: boolean;
-  tags: string[];
-  status?: LeadInfo["status"];
-}
-
-const cleanPhone = (p: string | null | undefined) =>
-  String(p ?? "").replace(/[^\d]/g, "");
-
-const STATUS_COLORS: Record<LeadInfo["status"], string> = {
-  nuevo: "bg-primary/15 text-primary",
-  interesado: "bg-warning/15 text-warning",
-  cliente: "bg-success/15 text-success",
-  perdido: "bg-destructive/15 text-destructive",
 };
 
-function Messages() {
-  const { organization, user } = useAuth();
+type LeadInfo = {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  notes?: string | null;
+  tags?: string[] | null;
+  status?: string | null;
+};
+
+type ContactInfo = {
+  id: string;
+  name: string;
+  phone: string;
+  notes?: string | null;
+  tags?: string[] | null;
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  nuevo: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  interesado: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  cliente: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  perdido: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+};
+
+const cleanPhone = (value: unknown) => String(value || "").replace(/\D/g, "");
+
+function isAudioUrl(url?: string | null, content?: string | null): boolean {
+  if (!url && !content) return false;
+  const target = (url || content || "").toLowerCase().split("?")[0];
+  return (
+    target.endsWith(".ogg") ||
+    target.endsWith(".mp3") ||
+    target.endsWith(".m4a") ||
+    target.endsWith(".wav") ||
+    target.endsWith(".aac") ||
+    target.endsWith(".opus") ||
+    target.endsWith(".webm") ||
+    content === "[audio]" ||
+    content === "🎤 Nota de voz"
+  );
+}
+
+function AudioMessage({ src, isOut }: { src: string; isOut: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      audioRef.current.play().catch(() => {});
+      setPlaying(true);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration);
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    if (isNaN(secs) || secs === 0) return "0:00";
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  return (
+    <div className="flex items-center gap-2.5 py-1.5 px-3 bg-background/20 rounded-xl min-w-[240px] max-w-full">
+      <audio
+        ref={audioRef}
+        src={src}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={() => setPlaying(false)}
+        preload="metadata"
+      />
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow-md transition-transform active:scale-95 ${
+          isOut
+            ? "bg-white text-primary hover:bg-white/90"
+            : "bg-emerald-600 text-white hover:bg-emerald-700"
+        }`}
+      >
+        {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 ml-0.5 fill-current" />}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <input
+          type="range"
+          min="0"
+          max={duration || 100}
+          value={currentTime}
+          onChange={(e) => {
+            const val = Number(e.target.value);
+            setCurrentTime(val);
+            if (audioRef.current) audioRef.current.currentTime = val;
+          }}
+          className="w-full h-1.5 accent-emerald-500 bg-background/40 rounded-lg cursor-pointer"
+        />
+        <div className="flex justify-between text-[10px] opacity-80 mt-0.5 font-mono">
+          <span>{formatTime(currentTime)}</span>
+          <span className="flex items-center gap-1">
+            <Volume2 className="w-2.5 h-2.5" />
+            {formatTime(duration)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessagesPage() {
+  const { user, organization } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [leadsByPhone, setLeadsByPhone] = useState<Map<string, LeadInfo>>(new Map());
   const [contactsByPhone, setContactsByPhone] = useState<Map<string, ContactInfo>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [activePhone, setActivePhone] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [activePhone, setActivePhone] = useState<string | null>(null);
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
-  const [editingNotes, setEditingNotes] = useState("");
-  const [editingTags, setEditingTags] = useState("");
-  const [savingDetails, setSavingDetails] = useState(false);
   const [hiddenWarnings, setHiddenWarnings] = useState<Set<string>>(new Set());
+
+  // Editables
+  const [editingTags, setEditingTags] = useState("");
+  const [editingNotes, setEditingNotes] = useState("");
+  const [savingDetails, setSavingDetails] = useState(false);
+
+  // Multimedia (Fotos)
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
 
+  // Grabador de Voz / Audio
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Load initial data: cache-first + delta sync from cloud
+  // Carga inicial
   useEffect(() => {
     if (!organization) return;
     const orgId = organization.id;
@@ -159,97 +276,100 @@ function Messages() {
     })();
   }, [organization]);
 
-  // Realtime: new messages → state + cache
+  // Realtime subscription
   useEffect(() => {
     if (!organization) return;
     const orgId = organization.id;
+
     const channel = supabase
-      .channel(`chat:${orgId}`)
+      .channel(`messages_log:org:${orgId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages_log", filter: `org_id=eq.${orgId}` },
-        (payload) => {
-          const m = payload.new as Msg;
-          if (!m.recipient) return;
-          setMessages((prev) => [m, ...prev]);
-          saveCachedMessages([{ ...(m as unknown as CachedMsg), org_id: orgId }]);
+        {
+          event: "*",
+          schema: "public",
+          table: "messages_log",
+          filter: `org_id=eq.${orgId}`,
         },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "messages_log", filter: `org_id=eq.${orgId}` },
         (payload) => {
-          const m = payload.new as Msg;
-          setMessages((prev) => prev.map((x) => (x.id === m.id ? m : x)));
-          saveCachedMessages([{ ...(m as unknown as CachedMsg), org_id: orgId }]);
+          if (payload.eventType === "INSERT") {
+            const raw = payload.new as Msg;
+            if (!raw.recipient) return;
+            setMessages((prev) => {
+              const map = new Map<string, Msg>();
+              for (const m of prev) map.set(m.id, m);
+              map.set(raw.id, raw);
+              const next = Array.from(map.values()).sort((a, b) =>
+                a.timestamp < b.timestamp ? 1 : -1,
+              );
+              saveCachedMessages([raw as CachedMsg]);
+              return next;
+            });
+          } else if (payload.eventType === "UPDATE") {
+            const raw = payload.new as Msg;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === raw.id ? { ...m, ...raw } : m)),
+            );
+          }
         },
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [organization]);
 
-  // Build conversation list
-  const conversations: Conversation[] = useMemo(() => {
-    const map = new Map<string, Conversation>();
+  // Agrupación de conversaciones
+  const conversations = useMemo(() => {
+    const map = new Map<
+      string,
+      { phone: string; lastMsg: Msg; unreadCount: number; lead?: LeadInfo; contact?: ContactInfo }
+    >();
+
     for (const m of messages) {
-      const phone = cleanPhone(m.recipient);
-      if (!phone) continue;
-      const lead = leadsByPhone.get(phone);
-      const contact = contactsByPhone.get(phone);
-      const existing = map.get(phone);
-      const previewText = m.content || (m.media_url ? "📷 [Imagen]" : "");
-      if (existing) {
-        if (new Date(m.timestamp) > new Date(existing.lastTs)) {
-          existing.lastTs = m.timestamp;
-          existing.lastMessage = previewText;
-          existing.inbound = m.direction === "inbound";
-        }
-      } else {
-        map.set(phone, {
-          phone,
-          displayName: lead?.name || contact?.name || `+${phone}`,
-          lastMessage: previewText,
-          lastTs: m.timestamp,
-          unread: 0,
-          inbound: m.direction === "inbound",
-          tags: lead?.tags ?? contact?.tags ?? [],
-          status: lead?.status,
+      const p = cleanPhone(m.recipient);
+      if (!p) continue;
+      const existing = map.get(p);
+      if (!existing) {
+        map.set(p, {
+          phone: p,
+          lastMsg: m,
+          unreadCount: m.direction === "inbound" && m.status !== "read" ? 1 : 0,
+          lead: leadsByPhone.get(p),
+          contact: contactsByPhone.get(p),
         });
+      } else {
+        if (new Date(m.timestamp) > new Date(existing.lastMsg.timestamp)) {
+          existing.lastMsg = m;
+        }
+        if (m.direction === "inbound" && m.status !== "read") {
+          existing.unreadCount += 1;
+        }
       }
     }
-    const addEmpty = (phone: string, name: string, tags: string[], status?: LeadInfo["status"]) => {
-      if (!phone || map.has(phone)) return;
-      map.set(phone, {
-        phone,
-        displayName: name || `+${phone}`,
-        lastMessage: "",
-        lastTs: new Date(0).toISOString(),
-        unread: 0,
-        inbound: false,
-        tags,
-        status,
-      });
-    };
-    leadsByPhone.forEach((l, p) => addEmpty(p, l.name, l.tags ?? [], l.status));
-    contactsByPhone.forEach((c, p) => addEmpty(p, c.name, c.tags ?? []));
+
     return Array.from(map.values()).sort(
-      (a, b) => new Date(b.lastTs).getTime() - new Date(a.lastTs).getTime(),
+      (a, b) =>
+        new Date(b.lastMsg.timestamp).getTime() - new Date(a.lastMsg.timestamp).getTime(),
     );
   }, [messages, leadsByPhone, contactsByPhone]);
 
   const filteredConvs = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter(
-      (c) => c.displayName.toLowerCase().includes(q) || c.phone.includes(q),
-    );
+    if (!search.trim()) return conversations;
+    const q = search.toLowerCase();
+    return conversations.filter((c) => {
+      const name = c.lead?.name || c.contact?.name || "";
+      return name.toLowerCase().includes(q) || c.phone.includes(q) || c.lastMsg.content.toLowerCase().includes(q);
+    });
   }, [conversations, search]);
 
   useEffect(() => {
-    if (!activePhone && filteredConvs.length > 0) setActivePhone(filteredConvs[0].phone);
+    if (!activePhone && filteredConvs.length > 0) {
+      setActivePhone(filteredConvs[0].phone);
+    }
   }, [filteredConvs, activePhone]);
 
-  // Restore draft when activePhone changes
   useEffect(() => {
     if (!activePhone) return;
     try {
@@ -278,7 +398,7 @@ function Messages() {
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [thread.length, activePhone, imagePreview]);
+  }, [thread.length, activePhone, imagePreview, audioPreviewUrl]);
 
   const activeLead = activePhone ? leadsByPhone.get(activePhone) : undefined;
   const activeContact = activePhone ? contactsByPhone.get(activePhone) : undefined;
@@ -298,6 +418,7 @@ function Messages() {
     setEditingNotes(activeLead?.notes ?? activeContact?.notes ?? "");
   }, [activePhone, activeLead?.id, activeContact?.id]);
 
+  // Selección de Imagen
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -320,13 +441,88 @@ function Messages() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const uploadSelectedImage = async (): Promise<string | null> => {
-    if (!selectedImage || !organization) return null;
-    setUploadingImage(true);
+  // Selección de Archivo de Audio
+  const handleAudioFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !organization) return;
+    if (!file.type.startsWith("audio/") && !file.name.endsWith(".ogg") && !file.name.endsWith(".mp3") && !file.name.endsWith(".m4a")) {
+      toast.error("Por favor selecciona un archivo de audio válido");
+      return;
+    }
+    setAudioBlob(file);
+    setAudioPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const clearAudio = () => {
+    setAudioBlob(null);
+    if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
+    setAudioPreviewUrl(null);
+    if (audioFileInputRef.current) audioFileInputRef.current.value = "";
+  };
+
+  // Grabador de Micrófono
+  const startRecording = async () => {
     try {
-      const ext = selectedImage.name.split(".").pop() || "jpg";
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const mimeType = mediaRecorder.mimeType || "audio/ogg; codecs=opus";
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        setAudioBlob(blob);
+        setAudioPreviewUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (e: any) {
+      toast.error("No se pudo acceder al micrófono: " + (e?.message || ""));
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      clearAudio();
+    }
+  };
+
+  const uploadMediaBlob = async (blob: Blob, ext = "jpg", mime = "image/jpeg"): Promise<string | null> => {
+    if (!organization) return null;
+    try {
       const filePath = `${organization.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, selectedImage, {
+      const { data, error } = await supabase.storage.from("crm-media").upload(filePath, blob, {
+        contentType: mime,
         cacheControl: "3600",
         upsert: true,
       });
@@ -334,269 +530,230 @@ function Messages() {
       const { data: pubUrl } = supabase.storage.from("crm-media").getPublicUrl(data.path);
       return pubUrl.publicUrl;
     } catch (e: any) {
-      console.error("[upload]", e);
-      toast.error("Error al subir la imagen: " + (e?.message || ""));
+      console.error("[uploadMediaBlob]", e);
+      toast.error("Error al subir archivo: " + (e?.message || ""));
       return null;
-    } finally {
-      setUploadingImage(false);
     }
   };
 
   const sendMessage = async () => {
-    if (!user || !activePhone || (!composer.trim() && !selectedImage)) return;
+    if (!user || !activePhone || (!composer.trim() && !selectedImage && !audioBlob)) return;
     const text = composer.trim();
     const phoneClean = cleanPhone(activePhone);
     setSending(true);
 
-    let uploadedUrl: string | null = null;
+    let mediaUrlToSend: string | null = null;
+    let mediaTypeToSend: "image" | "audio" | undefined = undefined;
+
     if (selectedImage) {
-      uploadedUrl = await uploadSelectedImage();
-      if (!uploadedUrl) {
+      const ext = selectedImage.name.split(".").pop() || "jpg";
+      mediaUrlToSend = await uploadMediaBlob(selectedImage, ext, selectedImage.type || "image/jpeg");
+      mediaTypeToSend = "image";
+      if (!mediaUrlToSend) {
+        setSending(false);
+        return;
+      }
+    } else if (audioBlob) {
+      setUploadingAudio(true);
+      const ext = audioBlob.type.includes("ogg") ? "ogg" : audioBlob.type.includes("mp3") ? "mp3" : "webm";
+      mediaUrlToSend = await uploadMediaBlob(audioBlob, ext, audioBlob.type || "audio/ogg");
+      mediaTypeToSend = "audio";
+      setUploadingAudio(false);
+      if (!mediaUrlToSend) {
         setSending(false);
         return;
       }
     }
 
-    const optimisticId = `tmp_${Date.now()}`;
-    const optimistic: Msg = {
-      id: optimisticId,
-      content: text || (uploadedUrl ? "📷 [Imagen]" : ""),
+    const optimisticMsg: Msg = {
+      id: `opt_${Date.now()}`,
+      org_id: organization?.id || "",
+      content: text || (mediaTypeToSend === "audio" ? "[audio]" : "[imagen]"),
+      media_url: mediaUrlToSend,
       direction: "outbound",
       timestamp: new Date().toISOString(),
       recipient: phoneClean,
       status: "pending",
-      error_message: null,
-      keyword_matched: null,
-      automation_id: null,
-      media_url: uploadedUrl,
     };
-    setMessages((prev) => [optimistic, ...prev]);
+
+    setMessages((prev) => [...prev, optimisticMsg]);
     setComposer("");
-    if (activePhone) {
-      try { localStorage.removeItem(`leadflow_draft_msg_${activePhone}`); } catch { /* ignore */ }
-    }
     clearImage();
+    clearAudio();
+    if (activePhone) localStorage.removeItem(`leadflow_draft_msg_${activePhone}`);
 
     try {
-      const { data, error } = await invokeFunction("whatsapp-handler", {
+      const res = await invokeFunction("whatsapp-handler", {
         user_id: user.id,
         numero: phoneClean,
         mensaje: text,
-        media_url: uploadedUrl || undefined,
+        media_url: mediaUrlToSend,
+        media_type: mediaTypeToSend,
       });
-      if (error) throw new Error(error.message);
-      const resp = data as any;
-      if (resp && resp.ok === false) {
-        throw new Error(resp.error || "Error al enviar");
+
+      if (res.error) {
+        toast.error(`Error al enviar: ${res.error.message || res.error}`);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === optimisticMsg.id
+              ? { ...m, status: "failed", error_message: res.error.message || String(res.error) }
+              : m,
+          ),
+        );
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "sent" } : m)),
+        );
       }
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-    } catch (e: any) {
+    } catch (err: any) {
+      toast.error(`Error de red: ${err?.message || "desconocido"}`);
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === optimisticId
-            ? { ...m, status: "failed", error_message: e?.message || "Error" }
+          m.id === optimisticMsg.id
+            ? { ...m, status: "failed", error_message: err?.message || "network_error" }
             : m,
         ),
       );
-      toast.error(e?.message || "No se pudo enviar el mensaje");
     } finally {
       setSending(false);
     }
   };
 
+  const updateLeadStatus = async (status: string) => {
+    if (!activeLead) return;
+    try {
+      await supabase.from("leads").update({ status, updated_at: new Date().toISOString() }).eq("id", activeLead.id);
+      setLeadsByPhone((prev) => {
+        const next = new Map(prev);
+        const cur = next.get(activePhone!);
+        if (cur) next.set(activePhone!, { ...cur, status });
+        return next;
+      });
+      toast.success("Estado actualizado");
+    } catch (err: any) {
+      toast.error("Error al actualizar estado: " + err?.message);
+    }
+  };
+
   const saveDetails = async () => {
-    if (!organization || !activePhone) return;
+    if (!activePhone) return;
     setSavingDetails(true);
-    const tags = editingTags
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const tagsArr = editingTags.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
     try {
       if (activeLead) {
-        const { error } = await supabase
-          .from("leads")
-          .update({ notes: editingNotes, tags })
-          .eq("id", activeLead.id);
-        if (error) throw error;
+        await supabase.from("leads").update({ tags: tagsArr, notes: editingNotes, updated_at: new Date().toISOString() }).eq("id", activeLead.id);
         setLeadsByPhone((prev) => {
           const next = new Map(prev);
-          next.set(activePhone, { ...activeLead, notes: editingNotes, tags });
+          const cur = next.get(activePhone);
+          if (cur) next.set(activePhone, { ...cur, tags: tagsArr, notes: editingNotes });
           return next;
         });
-      } else if (activeContact) {
-        const { error } = await supabase
-          .from("contacts")
-          .update({ notes: editingNotes, tags })
-          .eq("id", activeContact.id);
-        if (error) throw error;
+      }
+      if (activeContact) {
+        await supabase.from("contacts").update({ tags: tagsArr, notes: editingNotes, updated_at: new Date().toISOString() }).eq("id", activeContact.id);
         setContactsByPhone((prev) => {
           const next = new Map(prev);
-          next.set(activePhone, { ...activeContact, notes: editingNotes, tags });
+          const cur = next.get(activePhone);
+          if (cur) next.set(activePhone, { ...cur, tags: tagsArr, notes: editingNotes });
           return next;
         });
-      } else {
-        const { data, error } = await supabase
-          .from("leads")
-          .insert({
-            org_id: organization.id,
-            name: activeName || `Lead +${activePhone}`,
-            phone: activePhone,
-            notes: editingNotes,
-            tags,
-            status: "nuevo",
-          })
-          .select()
-          .single();
-        if (error) throw error;
-        if (data) {
-          setLeadsByPhone((prev) => {
-            const next = new Map(prev);
-            next.set(activePhone, data as LeadInfo);
-            return next;
-          });
-        }
       }
       toast.success("Detalles guardados");
-    } catch (e: any) {
-      toast.error(e?.message || "Error al guardar");
+    } catch (err: any) {
+      toast.error("Error: " + err?.message);
     } finally {
       setSavingDetails(false);
     }
   };
 
-  const updateStatus = async (newStatus: LeadInfo["status"]) => {
-    if (!organization || !activePhone) return;
-    try {
-      if (activeLead) {
-        const { error } = await supabase
-          .from("leads")
-          .update({ status: newStatus })
-          .eq("id", activeLead.id);
-        if (error) throw error;
-        setLeadsByPhone((prev) => {
-          const next = new Map(prev);
-          next.set(activePhone, { ...activeLead, status: newStatus });
-          return next;
-        });
-      } else {
-        const { data, error } = await supabase
-          .from("leads")
-          .insert({
-            org_id: organization.id,
-            name: activeName || `Lead +${activePhone}`,
-            phone: activePhone,
-            status: newStatus,
-          })
-          .select()
-          .single();
-        if (error) throw error;
-        if (data) {
-          setLeadsByPhone((prev) => {
-            const next = new Map(prev);
-            next.set(activePhone, data as LeadInfo);
-            return next;
-          });
-        }
-      }
-      toast.success(`Estado actualizado a ${newStatus}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Error al actualizar estado");
-    }
-  };
-
   const clearChat = async () => {
-    if (!organization || !activePhone) return;
-    const phoneClean = cleanPhone(activePhone);
-    const confirmed = window.confirm(
-      `¿Seguro que quieres borrar todos los mensajes con +${phoneClean}? Esta acción no se puede deshacer.`,
-    );
-    if (!confirmed) return;
+    if (!activePhone || !organization) return;
+    if (!confirm(`¿Vaciar toda la conversación con ${activeName}?`)) return;
     try {
       const { error } = await supabase
         .from("messages_log")
         .delete()
         .eq("org_id", organization.id)
-        .eq("recipient", phoneClean);
+        .eq("recipient", activePhone);
       if (error) throw error;
-      deleteCachedMessagesByRecipient(organization.id, phoneClean);
-      setMessages((prev) => prev.filter((m) => cleanPhone(m.recipient) !== phoneClean));
+      setMessages((prev) => prev.filter((m) => cleanPhone(m.recipient) !== activePhone));
       toast.success("Conversación vaciada");
     } catch (e: any) {
-      toast.error(e?.message || "No se pudo vaciar el chat");
+      toast.error("Error al vaciar chat: " + (e?.message || ""));
     }
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto flex flex-col h-[calc(100vh-2rem)]">
+    <div className="h-[calc(100vh-4rem)] flex flex-col space-y-4 max-w-[1800px] mx-auto p-4 md:p-6">
       <BackToDashboard />
       <PageHeader
-        title="Mensajes"
-        description="Bandeja unificada de conversaciones de WhatsApp con soporte multimedia"
+        title="Mensajería en Tiempo Real"
+        subtitle="Chatea directamente con tus clientes por WhatsApp con soporte de texto, imágenes y notas de voz"
       />
 
       <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
-        {/* COLUMN 1 — Conversation list */}
+        {/* COLUMN 1 — Conversaciones */}
         <aside className="col-span-12 md:col-span-4 lg:col-span-3 glass rounded-2xl flex flex-col overflow-hidden">
           <div className="p-3 border-b border-border">
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
               <Input
-                placeholder="Buscar por nombre o número..."
+                placeholder="Buscar cliente o mensaje..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 bg-background/40"
+                className="pl-9 h-9 bg-background/50 text-sm"
               />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto divide-y divide-border/50">
+
+          <div className="flex-1 overflow-y-auto divide-y divide-border/40">
             {loading && (
-              <div className="p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Cargando mensajes...
-              </div>
+              <div className="p-4 text-center text-xs text-muted-foreground">Cargando chats...</div>
             )}
             {!loading && filteredConvs.length === 0 && (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                Aún no hay conversaciones.
-              </div>
+              <div className="p-8 text-center text-xs text-muted-foreground">No hay mensajes aún</div>
             )}
             {filteredConvs.map((c) => {
+              const name = c.lead?.name || c.contact?.name || `+${c.phone}`;
               const active = c.phone === activePhone;
+              const isAudio = isAudioUrl(c.lastMsg.media_url, c.lastMsg.content);
+
               return (
                 <button
                   key={c.phone}
                   onClick={() => setActivePhone(c.phone)}
-                  className={`w-full text-left p-3 flex gap-3 items-start transition hover:bg-secondary/30 ${
+                  className={`w-full text-left p-3.5 flex gap-3 transition-colors hover:bg-secondary/50 ${
                     active ? "bg-primary/10 border-l-2 border-primary" : ""
                   }`}
                 >
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/40 to-primary/10 flex items-center justify-center shrink-0 text-sm font-semibold">
-                    {(c.displayName[0] || "?").toUpperCase()}
+                  <div className="w-11 h-11 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center text-sm font-semibold shrink-0">
+                    {(name[0] || "?").toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-sm truncate">{c.displayName}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {new Date(c.lastTs).toLocaleTimeString("es", {
-                          hour: "2-digit", minute: "2-digit",
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="font-semibold text-sm truncate">{name}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                        {new Date(c.lastMsg.timestamp).toLocaleTimeString("es", {
+                          hour: "2-digit",
+                          minute: "2-digit",
                         })}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      {c.inbound ? "" : "Tú: "}
-                      {c.lastMessage || "—"}
-                    </p>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {c.status && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_COLORS[c.status]}`}>
-                          {c.status}
-                        </span>
+                    <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                      {isAudio ? (
+                        <>
+                          <Mic className="w-3 h-3 text-emerald-500 shrink-0" />
+                          <span>Nota de voz</span>
+                        </>
+                      ) : c.lastMsg.media_url ? (
+                        <>
+                          <ImageIcon className="w-3 h-3 text-primary shrink-0" />
+                          <span>Foto</span>
+                        </>
+                      ) : (
+                        c.lastMsg.content
                       )}
-                      {c.tags.slice(0, 2).map((t) => (
-                        <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
+                    </p>
                   </div>
                 </button>
               );
@@ -604,7 +761,7 @@ function Messages() {
           </div>
         </aside>
 
-        {/* COLUMN 2 — Chat window */}
+        {/* COLUMN 2 — Ventana de Chat */}
         <section className="col-span-12 md:col-span-8 lg:col-span-6 glass rounded-2xl flex flex-col overflow-hidden">
           {!activePhone ? (
             <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -632,45 +789,54 @@ function Messages() {
                   size="sm"
                   onClick={() => void clearChat()}
                   className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  title="Vaciar chat (borra todos los mensajes de esta conversación)"
+                  title="Vaciar chat"
                 >
                   <Trash2 className="w-4 h-4" />
-                  <span className="hidden sm:inline ml-1.5 text-xs">Vaciar chat</span>
                 </Button>
               </header>
 
               <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-background/20">
                 {thread.length === 0 && (
                   <div className="text-center text-sm text-muted-foreground py-12">
-                    Sin mensajes todavía. Escribe algo o envía una imagen para iniciar.
+                    Sin mensajes todavía. Escribe algo o envía una nota de voz para iniciar.
                   </div>
                 )}
                 {thread.map((m) => {
                   const isOut = m.direction === "outbound";
-                  const imageUrl = m.media_url || (m.content?.startsWith("http") && (m.content.endsWith(".jpg") || m.content.endsWith(".png") || m.content.endsWith(".webp")) ? m.content : null);
+                  const isAudio = isAudioUrl(m.media_url, m.content);
+                  const imageUrl = !isAudio ? (m.media_url || (m.content?.startsWith("http") && (m.content.endsWith(".jpg") || m.content.endsWith(".png") || m.content.endsWith(".webp")) ? m.content : null)) : null;
 
                   return (
                     <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
                       <div
-                        className={`max-w-[75%] rounded-2xl p-3 text-sm shadow-sm space-y-2 ${
+                        className={`max-w-[80%] sm:max-w-[70%] rounded-2xl p-3 text-sm shadow-sm space-y-1.5 ${
                           isOut
                             ? "bg-primary text-primary-foreground rounded-br-sm"
                             : "bg-secondary text-foreground rounded-bl-sm"
                         }`}
                       >
+                        {/* Audio / Nota de voz */}
+                        {isAudio && m.media_url && (
+                          <AudioMessage src={m.media_url} isOut={isOut} />
+                        )}
+
+                        {/* Imagen */}
                         {imageUrl && (
                           <div className="rounded-xl overflow-hidden cursor-pointer relative group" onClick={() => setViewingImage(imageUrl)}>
                             <img
                               src={imageUrl}
-                              alt="Adjunto de WhatsApp"
+                              alt="Adjunto"
                               className="max-h-60 w-full object-cover rounded-xl transition group-hover:scale-105"
                               loading="lazy"
                             />
                           </div>
                         )}
-                        {m.content && m.content !== "📷 [Imagen]" && (
+
+                        {/* Texto */}
+                        {m.content && m.content !== "📷 [Imagen]" && m.content !== "[audio]" && m.content !== "[imagen]" && (
                           <div className="whitespace-pre-wrap break-words">{m.content}</div>
                         )}
+
                         <div className={`text-[10px] mt-1 flex items-center gap-1 justify-end ${
                           isOut ? "text-primary-foreground/70" : "text-muted-foreground"
                         }`}>
@@ -709,11 +875,10 @@ function Messages() {
                 <div className="mx-3 mt-2 mb-1 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning flex items-start gap-2 relative">
                   <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span className="pr-6">
-                    Ventana de 24h cerrada. No puedes enviar texto plano: usa una <strong>Plantilla aprobada de Meta</strong> o espera a que el cliente te escriba.
+                    Ventana de 24h cerrada. Para iniciar contacto debes usar una plantilla o esperar que el cliente responda.
                   </span>
                   <button
                     type="button"
-                    aria-label="Ocultar aviso"
                     onClick={() =>
                       setHiddenWarnings((prev) => {
                         const next = new Set(prev);
@@ -721,14 +886,14 @@ function Messages() {
                         return next;
                       })
                     }
-                    className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-warning/20 text-warning/80 hover:text-warning transition"
+                    className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-warning/20"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
 
-              {/* Media Preview before send */}
+              {/* Previsualización de Imagen */}
               {imagePreview && (
                 <div className="p-3 bg-secondary/30 border-t border-border flex items-center gap-3">
                   <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-border shrink-0">
@@ -743,11 +908,25 @@ function Messages() {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     <p className="font-medium text-foreground">{selectedImage?.name}</p>
-                    <p>{((selectedImage?.size || 0) / 1024).toFixed(1)} KB · Se enviará con tu mensaje</p>
+                    <p>{((selectedImage?.size || 0) / 1024).toFixed(1)} KB · Listo para enviar</p>
                   </div>
                 </div>
               )}
 
+              {/* Previsualización de Audio grabado o seleccionado */}
+              {audioPreviewUrl && (
+                <div className="p-3 bg-secondary/30 border-t border-border flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <AudioMessage src={audioPreviewUrl} isOut={false} />
+                    <span className="text-xs text-emerald-500 font-medium whitespace-nowrap">Nota de voz lista</span>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={clearAudio} className="h-8 w-8 text-destructive">
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+
+              {/* BARRA DE ENTRADA Y GRABACIÓN */}
               <div className="p-3 border-t border-border bg-background/30">
                 <input
                   type="file"
@@ -756,45 +935,114 @@ function Messages() {
                   accept="image/*"
                   className="hidden"
                 />
-                <div className="flex gap-2 items-end">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-11 w-11 shrink-0 text-muted-foreground hover:text-primary"
-                    title="Adjuntar imagen"
-                  >
-                    <ImageIcon className="w-5 h-5" />
-                  </Button>
-                  <Textarea
-                    value={composer}
-                    onChange={(e) => handleComposerChange(e.target.value)}
-                    placeholder={selectedImage ? "Agrega un pie de foto (opcional)..." : "Escribe un mensaje..."}
-                    rows={1}
-                    className="resize-none min-h-[44px] max-h-32 bg-background/50"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        void sendMessage();
-                      }
-                    }}
-                    disabled={sending || uploadingImage}
-                  />
-                  <Button
-                    onClick={() => void sendMessage()}
-                    disabled={sending || uploadingImage || (!composer.trim() && !selectedImage)}
-                    className="gradient-brand text-background border-0 h-11 shrink-0 px-4"
-                  >
-                    {sending || uploadingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  </Button>
-                </div>
+                <input
+                  type="file"
+                  ref={audioFileInputRef}
+                  onChange={handleAudioFileSelect}
+                  accept="audio/*,.ogg,.mp3,.m4a,.wav"
+                  className="hidden"
+                />
+
+                {isRecording ? (
+                  /* Modo Grabación de Voz en Vivo */
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 bg-destructive/10 border border-destructive/30 rounded-xl animate-pulse">
+                    <div className="flex items-center gap-2 text-destructive font-semibold text-sm">
+                      <div className="w-3 h-3 rounded-full bg-destructive animate-ping" />
+                      <span>Grabando audio: {Math.floor(recordingSeconds / 60)}:{recordingSeconds % 60 < 10 ? "0" : ""}{recordingSeconds % 60}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={cancelRecording}
+                        className="text-muted-foreground hover:text-destructive h-8 px-2 text-xs"
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={stopRecording}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-8 px-3 text-xs"
+                      >
+                        <Square className="w-3.5 h-3.5 mr-1 fill-current" />
+                        Finalizar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Modo Normal de Texto y Botones */
+                  <div className="flex gap-2 items-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-11 w-11 shrink-0 text-muted-foreground hover:text-primary"
+                      title="Adjuntar imagen"
+                    >
+                      <ImageIcon className="w-5 h-5" />
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => audioFileInputRef.current?.click()}
+                      className="h-11 w-11 shrink-0 text-muted-foreground hover:text-emerald-500"
+                      title="Subir archivo de audio"
+                    >
+                      <Music className="w-5 h-5" />
+                    </Button>
+
+                    <Textarea
+                      value={composer}
+                      onChange={(e) => handleComposerChange(e.target.value)}
+                      placeholder={selectedImage ? "Pie de foto (opcional)..." : audioBlob ? "Audio listo para enviar..." : "Escribe un mensaje..."}
+                      rows={1}
+                      className="resize-none min-h-[44px] max-h-32 bg-background/50"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendMessage();
+                        }
+                      }}
+                      disabled={sending || uploadingImage || uploadingAudio}
+                    />
+
+                    {/* Botón de Grabar Micrófono si no hay texto escrito */}
+                    {!composer.trim() && !selectedImage && !audioBlob ? (
+                      <Button
+                        type="button"
+                        onClick={startRecording}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white h-11 w-11 shrink-0 p-0 rounded-xl shadow-md"
+                        title="Grabar nota de voz"
+                      >
+                        <Mic className="w-5 h-5" />
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => void sendMessage()}
+                        disabled={sending || uploadingImage || uploadingAudio}
+                        className="gradient-brand text-background border-0 h-11 shrink-0 px-4"
+                      >
+                        {sending || uploadingImage || uploadingAudio ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
         </section>
 
-        {/* COLUMN 3 — Lead details */}
+        {/* COLUMN 3 — Detalles del Contacto / Lead */}
         <aside className="hidden lg:flex col-span-3 glass rounded-2xl flex-col overflow-hidden">
           {!activePhone ? (
             <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground p-4 text-center">
@@ -812,20 +1060,21 @@ function Messages() {
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <div>
-                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                  <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
                     Etapa del embudo
-                  </Label>
+                  </label>
                   <div className="grid grid-cols-2 gap-1.5 mt-2">
                     {(["nuevo", "interesado", "cliente", "perdido"] as const).map((st) => {
                       const active = (activeLead?.status || "nuevo") === st;
                       return (
                         <button
                           key={st}
-                          onClick={() => void updateStatus(st)}
-                          className={`text-xs py-1.5 px-2 rounded-lg border capitalize font-medium transition ${
+                          type="button"
+                          onClick={() => updateLeadStatus(st)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize border transition-all ${
                             active
-                              ? `${STATUS_COLORS[st]} border-current`
-                              : "border-border text-muted-foreground hover:bg-secondary"
+                              ? STATUS_COLORS[st]
+                              : "border-border/40 text-muted-foreground hover:bg-secondary/40"
                           }`}
                         >
                           {st}
@@ -836,40 +1085,38 @@ function Messages() {
                 </div>
 
                 <div>
-                  <Label htmlFor="tags" className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Etiquetas (separadas por coma)
-                  </Label>
+                  <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-1">
+                    <Tag className="w-3 h-3" /> Etiquetas (separadas por coma)
+                  </label>
                   <Input
-                    id="tags"
                     value={editingTags}
                     onChange={(e) => setEditingTags(e.target.value)}
-                    placeholder="VIP, Curso, Interesado"
-                    className="mt-1 text-xs"
+                    placeholder="VIP, PROMO, CLIENTE_NUEVO"
+                    className="mt-1.5 h-8 text-xs bg-background/50"
                   />
                 </div>
 
                 <div>
-                  <Label htmlFor="notes" className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Notas del lead
-                  </Label>
+                  <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
+                    Notas del Asesor
+                  </label>
                   <Textarea
-                    id="notes"
+                    rows={4}
                     value={editingNotes}
                     onChange={(e) => setEditingNotes(e.target.value)}
-                    placeholder="Escribe notas internas sobre este cliente..."
-                    rows={4}
-                    className="mt-1 text-xs resize-none"
+                    placeholder="Notas internas sobre este cliente..."
+                    className="mt-1.5 text-xs bg-background/50 resize-none"
                   />
                 </div>
 
                 <Button
-                  onClick={() => void saveDetails()}
-                  disabled={savingDetails}
-                  className="w-full gradient-brand text-background border-0"
                   size="sm"
+                  onClick={saveDetails}
+                  disabled={savingDetails}
+                  className="w-full text-xs"
                 >
-                  {savingDetails ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  Guardar detalles
+                  {savingDetails ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                  Guardar Detalles
                 </Button>
               </div>
             </>
@@ -877,17 +1124,17 @@ function Messages() {
         </aside>
       </div>
 
-      {/* Modal Image Viewer */}
+      {/* Modal para ver imagen en tamaño completo */}
       {viewingImage && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
           onClick={() => setViewingImage(null)}
         >
           <div className="relative max-w-4xl max-h-[90vh]">
-            <img src={viewingImage} alt="Full view" className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl" />
+            <img src={viewingImage} alt="WhatsApp" className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl" />
             <button
               onClick={() => setViewingImage(null)}
-              className="absolute -top-3 -right-3 p-2 bg-background border border-border rounded-full text-foreground hover:bg-secondary"
+              className="absolute -top-3 -right-3 p-2 bg-white text-black rounded-full shadow-lg hover:bg-white/80"
             >
               <X className="w-5 h-5" />
             </button>

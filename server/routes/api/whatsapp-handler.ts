@@ -15,6 +15,12 @@ function normalizePhone(p: string) {
   return n;
 }
 
+function isAudio(url: string, type?: string) {
+  if (type === "audio" || type === "voice") return true;
+  const clean = (url || "").toLowerCase().split("?")[0];
+  return clean.endsWith(".mp3") || clean.endsWith(".ogg") || clean.endsWith(".wav") || clean.endsWith(".m4a") || clean.endsWith(".aac") || clean.endsWith(".opus") || clean.endsWith(".webm");
+}
+
 export default defineEventHandler(async (event) => {
   setResponseHeader(event, "Access-Control-Allow-Origin", "*");
   setResponseHeader(event, "Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type");
@@ -23,7 +29,7 @@ export default defineEventHandler(async (event) => {
   if (event.method === "OPTIONS") return null;
   if (event.method !== "POST") return { ok: false, error: "method_not_allowed" };
 
-  let body: { user_id?: string; numero?: string; mensaje?: string; media_url?: string } = {};
+  let body: { user_id?: string; numero?: string; mensaje?: string; media_url?: string; media_type?: string } = {};
   try {
     body = await readBody(event);
   } catch {
@@ -34,6 +40,7 @@ export default defineEventHandler(async (event) => {
   const numero = normalizePhone(body.numero || "");
   const mensaje = (body.mensaje || "").trim();
   const mediaUrl = (body.media_url || "").trim();
+  const mediaType = body.media_type || (isAudio(mediaUrl) ? "audio" : mediaUrl ? "image" : undefined);
 
   if (!userId || !numero || (!mensaje && !mediaUrl)) {
     return { ok: false, error: "missing_params: user_id, numero y mensaje o media_url requeridos" };
@@ -66,7 +73,7 @@ export default defineEventHandler(async (event) => {
   const { data: usageNew } = await admin.rpc("increment_daily_usage", { _org_id: orgId });
   if (usageNew === null) {
     await admin.from("messages_log").insert({
-      org_id: orgId, direction: "outbound", content: mensaje || "[imagen]", media_url: mediaUrl || null,
+      org_id: orgId, direction: "outbound", content: mensaje || (mediaType === "audio" ? "[audio]" : "[imagen]"), media_url: mediaUrl || null,
       recipient: numero, status: "blocked", error_message: "Daily plan limit reached",
     });
     return { ok: false, error: "limite_diario_alcanzado" };
@@ -80,7 +87,12 @@ export default defineEventHandler(async (event) => {
     to: numero,
   };
 
-  if (mediaUrl) {
+  if (mediaType === "audio" || isAudio(mediaUrl, mediaType)) {
+    metaPayload.type = "audio";
+    metaPayload.audio = {
+      link: mediaUrl,
+    };
+  } else if (mediaUrl) {
     metaPayload.type = "image";
     metaPayload.image = {
       link: mediaUrl,
@@ -103,11 +115,13 @@ export default defineEventHandler(async (event) => {
   let data: any = null;
   try { data = await res.json(); } catch { /* ignore */ }
 
+  const defaultContent = mediaType === "audio" ? "[audio]" : mediaUrl ? "[imagen]" : mensaje;
+
   if (!res.ok) {
     const errPayload = data?.error || {};
     const errMsg = `meta_${res.status}: ${JSON.stringify(data).slice(0, 400)}`;
     await admin.from("messages_log").insert({
-      org_id: orgId, direction: "outbound", content: mensaje || "[imagen]", media_url: mediaUrl || null,
+      org_id: orgId, direction: "outbound", content: defaultContent, media_url: mediaUrl || null,
       recipient: numero, status: "failed", error_message: errMsg,
     });
     await admin.from("meta_errors").insert({
@@ -124,7 +138,7 @@ export default defineEventHandler(async (event) => {
 
   const messageId = data?.messages?.[0]?.id || null;
   await admin.from("messages_log").insert({
-    org_id: orgId, direction: "outbound", content: mensaje || "[imagen]", media_url: mediaUrl || null,
+    org_id: orgId, direction: "outbound", content: defaultContent, media_url: mediaUrl || null,
     recipient: numero, status: "sent", provider_message_id: messageId,
   });
   return { ok: true, numero, messageId, raw: data };
